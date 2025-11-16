@@ -17,3 +17,5 @@ Imports:
 Depends: 
     R (>= 3.5)
 LazyData: true
+URL: https://github.com/JStrueder/driftd
+BugReports: https://github.com/JStrueder/driftd/issues
