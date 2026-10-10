@@ -569,6 +569,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
         meanRT = mean(.data$RT_sec, na.rm = TRUE),
         sdRT   = sd(.data$RT_sec, na.rm = TRUE),
         minRT  = min(.data$RT_sec, na.rm = TRUE),
+        q10RT  = quantile(.data$RT_sec, probs = 0.1, na.rm = TRUE, names = FALSE),
         meanRT_upper = mean(.data$RT_sec[.data$response == "upper"], na.rm = TRUE),
         meanRT_lower = mean(.data$RT_sec[.data$response == "lower"], na.rm = TRUE),
         prop_upper = mean(.data$response == "upper", na.rm = TRUE),
@@ -615,8 +616,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
         a_guess = pmin(pmax(.data$sdRT * 2.5, 0.3), 3),
         a_guess = .data$a_guess * 1.2,
 
-        # t0_start: floor near fast RTs (10th percentile is robust)
-        t0_guess = pmin(pmax(quantile(.data$RT_sec, probs = 0.1, na.rm = TRUE), 0.05), 1),
+        # t0_start: floor near fast RTs (10th percentile is robust), but kept
+        # below the fastest RT so every trial has a non-zero likelihood at the start
+        t0_guess = pmax(pmin(.data$q10RT, 0.9 * .data$minRT, 1), 0),
 
         # default small variability starts
         z_guess = 0.5,
@@ -636,7 +638,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                          0.5 * sign(.data$prop_upper - 0.5 + 1e-6),
                          .data$v_guess),
         a_guess = ifelse(is.na(.data$a_guess) | .data$n_trials < 8, 1.0, .data$a_guess),
-        t0_guess = ifelse(is.na(.data$t0_guess) | .data$n_trials < 8, 0.25, .data$t0_guess)
+        # t0 is based on the fastest RTs, which stay informative even for sparse conditions
+        t0_guess = ifelse(is.na(.data$t0_guess), 0.2, .data$t0_guess)
       )
 
     # ---------- 6) Join back to trials and create trial-level start vectors ----------
@@ -652,6 +655,32 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     sz_start_val  <- if (fix_sz)  sz_fixed else data.to.model$sz_guess
     sv_start_val  <- if (fix_sv)  sv_fixed else data.to.model$sv_guess
 
+    # ---------- 7) Build the optimizer's starting vector and bounds ----------
+    # Each estimated parameter applies to the trials flagged in its tracking column.
+    # Its start is the mean guess over those trials (the minimum for t0, which must
+    # stay below every RT it applies to). Falls back to the default start if no
+    # usable guess exists, and is kept inside the optimizer bounds.
+    # t0 is the earliest possible response, so any trial faster than t0 has zero
+    # likelihood. Its upper bound is therefore set just below the fastest RT it
+    # applies to; otherwise the optimizer can get stuck at a t0 that writes off
+    # the fastest trials.
+    start_i <- start
+    upper_i <- upper_bounds
+    for (p in seq_along(param_names)) {
+      par_name <- param_names[p]
+      par_type <- list_with_split_pars[[p]][1]
+      trials <- contains_conditions_list[[p]]
+      if (par_type == "t0" && any(trials)) {
+        upper_i[p] <- 0.999 * min(data.to.model$RT[trials])
+      }
+      guesses <- data.to.model[[paste0(par_type, "_guess")]][trials]
+      guesses <- guesses[is.finite(guesses)]
+      if (length(guesses) > 0) {
+        start_i[par_name] <- if (par_type == "t0") min(guesses) else mean(guesses)
+      }
+    }
+    start_i <- pmin(pmax(start_i, lower_bounds), upper_i)
+
     ### --- Diagnostic: Print starting values per condition --- ###
 
     if (print_starting_vals == TRUE) {
@@ -659,18 +688,20 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       cat(paste0("Participant ", i, " -- Summary:\n"))
       cat("======================================\n")
       print(cond_summaries)
+      cat("\nStarting values passed to the optimizer:\n")
+      print(round(start_i, 3))
       cat("======================================\n\n")
     }
 
     # fit the model
-    fit <- nlminb(start, objective = ll_fun,
+    fit <- nlminb(start_i, objective = ll_fun,
                   RT = data.to.model[["RT"]], response = data.to.model[["response"]],
                   a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
                   precision = precision, stop_on_error = stop_on_error,
                   param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
                   control = list(iter.max = 10000, eval.max = 10000),
                   lower = lower_bounds,
-                  upper = upper_bounds)
+                  upper = upper_i)
     # save to empirical_ests
     parms <- fit$par
     paramEsts[loopCount,"ID"] <- i
