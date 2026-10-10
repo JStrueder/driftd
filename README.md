@@ -83,4 +83,4 @@ citation("driftd")
 
 ## Contact and issues
 
-- Maintainer: J. D. Strueder (<jeremy-strueder@uiowa.edu>)
+- Maintainer: J. D. Strueder (<jstrueder@iese.edu>)
