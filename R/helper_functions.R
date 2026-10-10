@@ -202,21 +202,22 @@ posterior_predict <- function(object, n_sim = 1) {
 #' @param participant_params A single row (\code{data.frame} or \code{tibble})
 #'   containing all estimated parameters for one participant.
 #' @param condition A \code{character} string specifying the experimental
-#'   condition (e.g., \code{"high_coherence"}, \code{"low_coherence"}).
+#'   condition cell, as stored in the \code{cond} column of the fitted data
+#'   (e.g., \code{"neg_0.45"}).
 #' @param settings A \code{list} containing the model fitting settings,
-#'   particularly \code{settings$varying_parameters}, which indicates which
-#'   parameters vary by condition.
+#'   particularly \code{settings$cell_parameters}, which records the name of the
+#'   parameter that applies to each condition cell.
 #'
 #' @return A \code{list} containing the seven primary DDM parameter values
 #'   (\code{a}, \code{t0}, \code{z}, \code{v}, \code{st0}, \code{sz}, \code{sv})
 #'   for the specified condition.
 #'
 #' @details
-#' This function implements the logic required to handle both **non-varying**
-#' parameters (e.g., \code{a}) and **condition-varying** parameters (e.g., \code{v_c1}).
-#' It systematically checks the estimated parameter names against the structure
-#' defined in \code{settings$varying_parameters} and uses a search strategy to
-#' find the correct parameter estimate corresponding to the \code{condition} string.
+#' For each parameter, the column to use is looked up in
+#' \code{settings$cell_parameters}, which \code{\link{driftd}} builds by matching
+#' trials to parameters on the actual condition values. Fixed parameters (recorded
+#' as \code{NA}) are read from the column named after the parameter itself
+#' (e.g., \code{st0}).
 #'
 #' **Note:** This function is primarily intended for internal use by the
 #' \code{\link{posterior_predict}} function and is not typically called by end-users.
@@ -224,108 +225,30 @@ posterior_predict <- function(object, n_sim = 1) {
 #' @keywords internal
 get_parameters_for_condition <- function(participant_params, condition, settings) {
 
-  # Initialize with defaults
+  if (is.null(settings$cell_parameters)) {
+    stop("This driftd_results object was created by an older version of driftd. ",
+         "Please refit the model.")
+  }
+
+  # Defaults, used only if a parameter value cannot be found
   params <- list(
     a = 1.0, t0 = 0.2, z = 0.5, v = 0.0,
     st0 = 0.0, sz = 0.0, sv = 0.0
   )
 
-  # Helper function to extract parameter
-  extract_param <- function(param_name) {
+  cell <- settings$cell_parameters[settings$cell_parameters$cond == condition, , drop = FALSE]
 
-    # First, check if this parameter varies across conditions
-    vary_conditions <- settings$varying_parameters[[param_name]]
+  for (param_name in names(params)) {
+    column <- if (nrow(cell) == 1) cell[[param_name]] else NA_character_
+    if (is.na(column)) column <- param_name
 
-    if (length(vary_conditions) > 0 && condition != "Overall") {
-      # Parameter varies - look for condition-specific parameter
-
-      # Split condition into components (e.g., "neg_0.45" -> c("neg", "0.45"))
-      condition_parts <- strsplit(condition, "_")[[1]]
-
-      # Look for all parameters that start with this param name
-      param_pattern <- paste0("^", param_name, "_")
-      all_param_names <- names(participant_params)
-      matching_params <- all_param_names[grepl(param_pattern, all_param_names)]
-
-      # Find the best matching parameter
-      best_match <- NULL
-
-      # Strategy 1: Look for exact match with full condition
-      exact_match <- paste0(param_name, "_", condition)
-      if (exact_match %in% matching_params) {
-        best_match <- exact_match
-      }
-
-      # Strategy 2: If no exact match, look for parameters that match one dimension
-      if (is.null(best_match)) {
-        for (param_candidate in matching_params) {
-          # Remove the parameter prefix to get just the condition part
-          condition_part <- sub(paste0("^", param_name, "_"), "", param_candidate)
-
-          # Check if this parameter's condition part matches any of our condition parts
-          if (condition_part %in% condition_parts) {
-            best_match <- param_candidate
-            break
-          }
-        }
-      }
-
-      # Strategy 3: If still no match, look for parameters containing all condition parts
-      if (is.null(best_match)) {
-        for (param_candidate in matching_params) {
-          # Remove the parameter prefix to get just the condition part
-          condition_part <- sub(paste0("^", param_name, "_"), "", param_candidate)
-          param_condition_parts <- strsplit(condition_part, "_")[[1]]
-
-          # Check if all condition parts are present in the parameter name
-          if (all(condition_parts %in% param_condition_parts)) {
-            best_match <- param_candidate
-            break
-          }
-        }
-      }
-
-      # Strategy 4: Try the reverse order
-      if (is.null(best_match)) {
-        reverse_condition <- paste(rev(condition_parts), collapse = "_")
-        reverse_param_name <- paste0(param_name, "_", reverse_condition)
-
-        if (reverse_param_name %in% matching_params) {
-          best_match <- reverse_param_name
-        }
-      }
-
-      # If we found a match, use it
-      if (!is.null(best_match)) {
-        value <- participant_params[[best_match]]
-        if (is.numeric(value) && is.finite(value)) {
-          return(value)
-        }
-      }
+    value <- participant_params[[column]]
+    if (is.numeric(value) && length(value) == 1 && is.finite(value)) {
+      params[[param_name]] <- value
+    } else {
+      cat("  Issue finding parameter value. Using default parameter:", param_name, "=", params[[param_name]], "\n")
     }
-
-    # If parameter doesn't vary OR condition-specific parameter not found,
-    # use the base parameter (non-varying)
-    if (param_name %in% names(participant_params)) {
-      value <- participant_params[[param_name]]
-      if (is.numeric(value) && is.finite(value)) {
-        return(value)
-      }
-    }
-
-    # Return default as last resort
-    cat("  Issue finding parameter value. Using default parameter:", param_name, "=", params[[param_name]], "\n")
-    return(params[[param_name]])
   }
-
-  # Extract each parameter
-  params$a <- extract_param("a")
-  params$t0 <- extract_param("t0")
-  params$z <- extract_param("z")
-  params$v <- extract_param("v")
-  params$st0 <- extract_param("st0")
-  params$sz <- extract_param("sz")
-  params$sv <- extract_param("sv")
 
   return(params)
 }

@@ -30,8 +30,9 @@ print.driftd_results <- function(x, ...) {
   cat("Participants:", x$settings$n_participants, "\n")
   cat("Conditions:", x$settings$n_conditions, "\n")
   cat("\nParameter Estimates (first 6 participants):\n")
-  print(head(x$parameters), ...)
+  print(head(x$individual_estimates), ...)
   cat("\nUse summary() for detailed results or plot() for visualization.\n")
+  invisible(x)
 }
 
 

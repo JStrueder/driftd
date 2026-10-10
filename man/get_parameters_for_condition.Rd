@@ -11,11 +11,12 @@ get_parameters_for_condition(participant_params, condition, settings)
 containing all estimated parameters for one participant.}
 
 \item{condition}{A \code{character} string specifying the experimental
-condition (e.g., \code{"high_coherence"}, \code{"low_coherence"}).}
+condition cell, as stored in the \code{cond} column of the fitted data
+(e.g., \code{"neg_0.45"}).}
 
 \item{settings}{A \code{list} containing the model fitting settings,
-particularly \code{settings$varying_parameters}, which indicates which
-parameters vary by condition.}
+particularly \code{settings$cell_parameters}, which records the name of the
+parameter that applies to each condition cell.}
 }
 \value{
 A \code{list} containing the seven primary DDM parameter values
@@ -28,11 +29,11 @@ parameter columns from the \code{individual_estimates} table back to a simple
 list of parameter values needed for a simulation in a given experimental condition.
 }
 \details{
-This function implements the logic required to handle both \strong{non-varying}
-parameters (e.g., \code{a}) and \strong{condition-varying} parameters (e.g., \code{v_c1}).
-It systematically checks the estimated parameter names against the structure
-defined in \code{settings$varying_parameters} and uses a search strategy to
-find the correct parameter estimate corresponding to the \code{condition} string.
+For each parameter, the column to use is looked up in
+\code{settings$cell_parameters}, which \code{\link{driftd}} builds by matching
+trials to parameters on the actual condition values. Fixed parameters (recorded
+as \code{NA}) are read from the column named after the parameter itself
+(e.g., \code{st0}).
 
 \strong{Note:} This function is primarily intended for internal use by the
 \code{\link{posterior_predict}} function and is not typically called by end-users.

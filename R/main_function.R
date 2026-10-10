@@ -5,7 +5,7 @@
 #' @param data A data frame containing the experimental data.
 #' @param sub_id Character string specifying the column name for subject/participant ID. Default is "sub_id".
 #' @param response Character string specifying the column name for responses (coded as 0/1 or 'lower'/'upper'). Default is "response".
-#' @param rt Character string specifying the column name for reaction times. Default is "rt".
+#' @param rt Character string specifying the column name for reaction times. Default is "rt". RTs should be in seconds; if the mean RT is above 10, RTs are assumed to be in milliseconds and converted to seconds (with a message).
 #' @param vary_a Character vector of column names indicating factors that modulate boundary separation (a). The model will estimate distinct values of (\code{a}) for each level combination of the specified variables.
 #' @param vary_t0 Character vector of column names indicating factors that modulate non-decision time (t0). The model will estimate distinct values of (\code{t0}) for each level combination of the specified variables.
 #' @param vary_z Character vector of column names indicating factors that modulate starting point (z). The model will estimate distinct values of (\code{z}) for each level combination of the specified variables.
@@ -32,12 +32,12 @@
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
 #'
 #' @details
-#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
+#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
 #'
 #' @return A list of class \code{driftd_results} containing:
 #' \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
 #' \item{summary}{A data frame with mean and standard deviation of all estimated parameters across participants.}
-#' \item{settings}{A list summarizing the model structure (varying and fixed parameters).}
+#' \item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 #' \item{data}{The processed data frame used for fitting.}
 #' \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
 #' @export
@@ -113,6 +113,37 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   # Validate RT values
   if (any(data[[rt]] <= 0)) {
     stop("All RT values must be positive")
+  }
+
+  # rtdists works in seconds. RTs averaging over 10 are assumed to be milliseconds.
+  if (mean(data[[rt]]) > 10) {
+    message("RTs appear to be in milliseconds (mean RT = ", round(mean(data[[rt]]), 1),
+            "). Converting to seconds; all estimates and simulated RTs are in seconds.")
+    data[[rt]] <- data[[rt]] / 1000
+  }
+
+  # A parameter can either be fixed to one value or vary across conditions, not both
+  vary_args <- list(a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
+                    st0 = vary_st0, sz = vary_sz, sv = vary_sv)
+  fix_args <- c(a = fix_a, t0 = fix_t0, z = fix_z, v = fix_v,
+                st0 = fix_st0, sz = fix_sz, sv = fix_sv)
+  conflicting <- names(fix_args)[fix_args & lengths(vary_args) > 0]
+  if (length(conflicting) > 0) {
+    stop("These parameters are both fixed and set to vary across conditions: ",
+         paste(conflicting, collapse = ", "), ". Set fix_", conflicting[1],
+         " = FALSE to estimate it per condition, or remove vary_", conflicting[1], ".")
+  }
+
+  # Check that the condition columns exist and have no missing values
+  vary_cols <- unique(unlist(vary_args))
+  missing_vary <- setdiff(vary_cols, names(data))
+  if (length(missing_vary) > 0) {
+    stop("The following vary_ columns were not found in data: ",
+         paste(missing_vary, collapse = ", "))
+  }
+  na_vary <- vary_cols[vapply(vary_cols, function(x) any(is.na(data[[x]])), logical(1))]
+  if (length(na_vary) > 0) {
+    stop("NA values found in condition column(s): ", paste(na_vary, collapse = ", "))
   }
 
   # Validate parameter bounds
@@ -235,6 +266,10 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     cond <- rep("NA", nrow(data))
   } else {
     cond <- do.call(paste, c(data[conditions], sep = "_"))
+    if (length(unique(cond)) != nrow(unique(data[conditions]))) {
+      stop("Some condition levels contain '_' in a way that gives two different conditions ",
+           "the same label. Please recode these levels without '_'.")
+    }
   }
 
   #before next steps, save original column names for processed_data frame
@@ -266,7 +301,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   RPlist <- unique(df.rtdists$ID)
   #RPlist <- RPlist[RPlist != 77]
 
-  # SECTION B: INITIALIZING FUNCTION TO GENERATE NAMES
+  # SECTION B: GENERATING THE CONDITION CELLS EACH PARAMETER IS ESTIMATED FOR
 
   #order vary lists alphabetically
   vary_a <- sort(vary_a)
@@ -276,45 +311,48 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   vary_st0 <- sort(vary_st0)
   vary_sz <- sort(vary_sz)
   vary_sv <- sort(vary_sv)
+  vary_list <- list(a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
+                    st0 = vary_st0, sz = vary_sz, sv = vary_sv)
 
-  # Function to generate names. This function uses the levels list to generate cell names, based on the condition names that are given to it.
-  generate_names <- function(levels_list, index = 1, current = NULL) {
-    # Base case: if all lists have been processed, return the current combination
-    if (index > length(levels_list)) {
-      return(paste(current, collapse = "_"))
-    }
-
-    # Initialize an empty vector to store combinations for the current list
-    list_names <- c()
-
-    # Iterate over each element in the current list
-    for (item in levels_list[[index]]) {
-      # Recursive call to generate combinations for the next list
-      list_names <- c(list_names, generate_names(levels_list, index + 1, c(current, item)))
-    }
-
-    return(list_names)
+  # Function to generate all level combinations of the given condition columns, one row per
+  # combination. The first column varies slowest (neg_0.4, neg_0.45, ..., pos_0.4, ...).
+  generate_cells <- function(vary) {
+    grid <- expand.grid(rev(levels_list[vary]), KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+    grid[vary]
   }
 
   # SECTION C: GENERATING STARTING PARAMETER LIST THAT WILL BE FED TO NLMINB
 
-  # for each parameter, see which conditions it varies across and generate names for each condition under which parameter will be estimated
-  names_a <- generate_names(levels_list[vary_a])
-  names_t0 <- generate_names(levels_list[vary_t0])
-  names_z <- generate_names(levels_list[vary_z])
-  names_v <- generate_names(levels_list[vary_v])
-  names_st0 <- generate_names(levels_list[vary_st0])
-  names_sz <- generate_names(levels_list[vary_sz])
-  names_sv <- generate_names(levels_list[vary_sv])
+  # For each parameter, generate one name per condition cell it is estimated for, and keep
+  # the cell's level values (param_cells) so trials can be matched to parameters by value.
+  # A parameter that doesn't vary across any conditions is simply given its name.
+  param_cells <- list()
+  param_type <- c()
+  for (par in names(vary_list)) {
+    if (length(vary_list[[par]]) == 0) {
+      param_cells[par] <- list(list())
+      param_type[par] <- par
+    } else {
+      grid <- generate_cells(vary_list[[par]])
+      cell_names <- paste0(par, "_", do.call(paste, c(grid, sep = "_")))
+      for (r in seq_len(nrow(grid))) {
+        param_cells[[cell_names[r]]] <- as.list(grid[r, , drop = FALSE])
+      }
+      param_type[cell_names] <- par
+    }
+  }
+  if (length(param_cells) != length(param_type)) {
+    stop("Some condition levels contain '_' in a way that gives two different conditions ",
+         "the same parameter name. Please recode these levels without '_'.")
+  }
 
-  # if a parameter doesn't vary across any conditions, simply give it its name (since it will only be estimated once)
-  names_a <- ifelse(names_a == "", "a", paste0("a_", names_a))
-  names_t0 <- ifelse(names_t0 == "", "t0", paste0("t0_", names_t0))
-  names_z <- ifelse(names_z == "", "z", paste0("z_", names_z))
-  names_v <- ifelse(names_v == "", "v", paste0("v_", names_v))
-  names_st0 <- ifelse(names_st0 == "", "st0", paste0("st0_", names_st0))
-  names_sz <- ifelse(names_sz == "", "sz", paste0("sz_", names_sz))
-  names_sv <- ifelse(names_sv == "", "sv", paste0("sv_", names_sv))
+  names_a <- names(param_type)[param_type == "a"]
+  names_t0 <- names(param_type)[param_type == "t0"]
+  names_z <- names(param_type)[param_type == "z"]
+  names_v <- names(param_type)[param_type == "v"]
+  names_st0 <- names(param_type)[param_type == "st0"]
+  names_sz <- names(param_type)[param_type == "sz"]
+  names_sv <- names(param_type)[param_type == "sv"]
 
   # determine how many times a parameter will be estimated
   length_a <- length(names_a)
@@ -399,24 +437,37 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   # SECTION E: GENERATING TRACKING COLUMNS FOR ALL THE STARTING PARAMETERS
   # EACH STARTING PARAMETER GETS A COLUMN IN THE DATASET THAT EQUALS "TRUE", IF THE STARTING PARAMETER APPLIES FOR THAT TRIAL
 
-  # take the cond column and split it into the individual strings that were separated by "_". Will be used to create tracking columns
-  cond_words <- strsplit(cond, "_")
-
   split_pars <- function(string) unlist(strsplit(string, "_"))
   list_with_split_pars <- lapply(param_names, split_pars)
 
-  tracking_cols <- lapply(seq_along(list_with_split_pars), function(i) {
-    param <- list_with_split_pars[[i]]
-    if (length(param) > 1) {
-      contains_condition <- sapply(cond_words, function(x) all(param[-1] %in% x))
-    } else {
-      contains_condition <- rep(TRUE, length(cond_words))
+  # A trial belongs to a parameter if its value in every condition column the parameter
+  # varies across equals the parameter's level (always TRUE for non-varying parameters)
+  tracking_cols <- lapply(param_names, function(par_name) {
+    cell <- param_cells[[par_name]]
+    contains_condition <- rep(TRUE, nrow(data))
+    for (column in names(cell)) {
+      contains_condition <- contains_condition & data[[column]] == cell[[column]]
     }
-    name_i <- paste0("contains_condition_", param_names[i])
+    name_i <- paste0("contains_condition_", par_name)
     tibble::as_tibble(setNames(list(contains_condition), name_i))
   })
 
   df.rtdists <- bind_cols(df.rtdists, tracking_cols)
+
+  # Record which estimated parameter applies in each condition cell (NA if the parameter
+  # is fixed). posterior_predict() uses this to simulate each cell.
+  cells <- unique(cond)
+  first_trial <- match(cells, cond)
+  cell_parameters <- data.frame(cond = cells)
+  for (par in names(vary_list)) {
+    candidates <- param_names[param_type[param_names] == par]
+    cell_parameters[[par]] <- vapply(first_trial, function(trial) {
+      applies <- vapply(candidates, function(name) {
+        df.rtdists[[paste0("contains_condition_", name)]][trial]
+      }, logical(1))
+      if (any(applies)) candidates[applies][1] else NA_character_
+    }, character(1))
+  }
 
   # SECTION F: CREATING THE WRAPPER FUNCTION FOR RTDISTS
 
@@ -545,14 +596,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # prepare starting parameters for rtdists function
     ### --- Compute condition-specific starting values (using "upper"/"lower" responses) --- ###
 
-    # ---------- 1) RT units: convert to seconds if likely ms ----------
-    RT_raw <- data.to.model$RT
-    if (mean(RT_raw, na.rm = TRUE) > 10) {
-      RT_sec <- RT_raw / 1000
-    } else {
-      RT_sec <- RT_raw
-    }
-    data.to.model$RT_sec <- RT_sec
+    # ---------- 1) RT units: already converted to seconds during the pre-checks ----------
+    data.to.model$RT_sec <- data.to.model$RT
 
     # ---------- 2) Recode responses: "upper" -> +1, "lower" -> -1 ----------
     data.to.model$resp_num <- dplyr::case_when(
@@ -766,7 +811,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
         st0 = fix_st0, sz = fix_sz, sv = fix_sv
       ),
       n_participants = length(RPlist),
-      n_conditions = length(unique(df.rtdists$cond))
+      n_conditions = length(unique(df.rtdists$cond)),
+      cell_parameters = cell_parameters
     ),
     data = processed_data,
     convergence = table(paramEsts$converge)
