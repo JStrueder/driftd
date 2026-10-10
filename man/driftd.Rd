@@ -42,7 +42,7 @@ driftd(
 
 \item{response}{Character string specifying the column name for responses (coded as 0/1 or 'lower'/'upper'). Default is "response".}
 
-\item{rt}{Character string specifying the column name for reaction times. Default is "rt".}
+\item{rt}{Character string specifying the column name for reaction times. Default is "rt". RTs should be in seconds; if the mean RT is above 10, RTs are assumed to be in milliseconds and converted to seconds (with a message).}
 
 \item{vary_a}{Character vector of column names indicating factors that modulate boundary separation (a). The model will estimate distinct values of (\code{a}) for each level combination of the specified variables.}
 
@@ -96,7 +96,7 @@ driftd(
 A list of class \code{driftd_results} containing:
 \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
 \item{summary}{A data frame with mean and standard deviation of all estimated parameters across participants.}
-\item{settings}{A list summarizing the model structure (varying and fixed parameters).}
+\item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 \item{data}{The processed data frame used for fitting.}
 \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
 }
@@ -104,5 +104,5 @@ A list of class \code{driftd_results} containing:
 Fits a drift-diffusion model (DDM) to response time (RT) and response data for individual participants using maximum likelihood estimation via \code{nlminb}.
 }
 \details{
-The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
+The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
 }
