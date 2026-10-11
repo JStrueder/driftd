@@ -32,7 +32,8 @@ driftd(
   sv_fixed = 0,
   precision = 3,
   stop_on_error = FALSE,
-  print_starting_vals = FALSE
+  print_starting_vals = FALSE,
+  max_retries = 5
 )
 }
 \arguments{
@@ -91,6 +92,8 @@ driftd(
 \item{stop_on_error}{Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.}
 
 \item{print_starting_vals}{Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.}
+
+\item{max_retries}{Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge. The first retry restarts the optimizer from where it stopped; further retries start from alternative starting values until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.}
 }
 \value{
 A list of class \code{driftd_results} containing:
@@ -99,10 +102,13 @@ A list of class \code{driftd_results} containing:
 \item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 \item{data}{The processed data frame used for fitting.}
 \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
+\item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no alternative starts were needed), and the \code{nlminb} message.}
 }
 \description{
 Fits a drift-diffusion model (DDM) to response time (RT) and response data for individual participants using maximum likelihood estimation via \code{nlminb}.
 }
 \details{
-The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
+The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
+
+Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped; if that fails, the model is refitted from alternative starting values spread over the plausible parameter space with a deterministic Halton sequence, until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 }

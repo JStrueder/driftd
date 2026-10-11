@@ -30,9 +30,12 @@
 #' @param precision Numeric: Precision parameter for \code{rtdists::ddiffusion}. Default is 3.
 #' @param stop_on_error Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
+#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge. The first retry restarts the optimizer from where it stopped; further retries start from alternative starting values until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
-#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality and suggests initial parameter guesses based on participant-condition RT summaries.
+#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
+#'
+#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped; if that fails, the model is refitted from alternative starting values spread over the plausible parameter space with a deterministic Halton sequence, until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
 #' @return A list of class \code{driftd_results} containing:
 #' \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
@@ -40,6 +43,7 @@
 #' \item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 #' \item{data}{The processed data frame used for fitting.}
 #' \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
+#' \item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no alternative starts were needed), and the \code{nlminb} message.}
 #' @export
 #'
 #' @importFrom rtdists ddiffusion
@@ -78,7 +82,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                    precision = 3,
                    stop_on_error = FALSE,
 
-                   print_starting_vals = FALSE
+                   print_starting_vals = FALSE,
+
+                   max_retries = 5
 
 )
 {
@@ -518,10 +524,13 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       precision = precision, stop_on_error = stop_on_error
     )
 
-    # Handle invalid densities
+    # Handle invalid densities. A density of 0 usually means the true density is too
+    # small to represent (e.g. an RT just above t0), so it is replaced by the smallest
+    # positive double. A larger floor (this used to be 1e-10) caps the cost of a poorly
+    # fitted trial, and the optimizer can then improve the fit to the remaining trials
+    # by effectively discarding one.
     if (any(is.na(dens) | dens <= 0)) {
-      # Penalize but allow optimizer to move
-      dens[dens <= 0 | is.na(dens)] <- 1e-10
+      dens[dens <= 0 | is.na(dens)] <- .Machine$double.xmin
     }
 
     # Return negative log-likelihood
@@ -535,6 +544,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   Nfixed <- length(fixed_par_vals)
   paramEsts <- data.frame(matrix(NA, ncol=Nparams+Nfixed+5))
   names(paramEsts) <- c("ID", names(start), names(fixed_par_vals), "converge", "LLE", "AIC", "BIC")
+  fit_info <- data.frame(ID = RPlist, optimizer_runs = NA_integer_,
+                         converge = NA_integer_, best_replicated = NA, message = NA_character_)
 
   # SECTION H: FIT THE MODEL FOR EACH PARTICIPANT AND DUMP RESULTS INTO OUTPUT TABLE
 
@@ -612,79 +623,38 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       dplyr::summarise(
         n_trials = n(),
         meanRT = mean(.data$RT_sec, na.rm = TRUE),
-        sdRT   = sd(.data$RT_sec, na.rm = TRUE),
+        varRT  = stats::var(.data$RT_sec, na.rm = TRUE),
         minRT  = min(.data$RT_sec, na.rm = TRUE),
         q10RT  = quantile(.data$RT_sec, probs = 0.1, na.rm = TRUE, names = FALSE),
-        meanRT_upper = mean(.data$RT_sec[.data$response == "upper"], na.rm = TRUE),
-        meanRT_lower = mean(.data$RT_sec[.data$response == "lower"], na.rm = TRUE),
         prop_upper = mean(.data$response == "upper", na.rm = TRUE),
         .groups = "drop"
       )
 
-    # ---------- 4) Compute start guesses (no correctness required) ----------
-    # Explanation of v_start:
-    #  - prop_upper - 0.5 gives direction and (rough) magnitude of bias
-    #  - RT difference (lower - upper) / sdRT gives an RT-based cue (positive -> faster upper)
-    #  - combine both with scaling constants, and clamp to [-3,3]
+    # ---------- 4) Starting guesses from EZ-diffusion ----------
+    # EZ (Wagenmakers et al., 2007) gives closed-form estimates of v, a and t0 per condition
+    # cell. t0 is kept below the fastest RT so every trial has a non-zero likelihood at the
+    # start. z starts unbiased, and the variability parameters at small values.
+    ez <- ez_diffusion(cond_summaries$prop_upper, cond_summaries$meanRT,
+                       cond_summaries$varRT, cond_summaries$n_trials)
     cond_summaries <- cond_summaries %>%
       dplyr::mutate(
-        # fallback handling for sdRT or meanRT_* NA
-        # ----- choose sign from proportion (fallback: RT diff sign) -----
-        sign_prop = dplyr::case_when(
-          is.na(.data$prop_upper) ~ 0,
-          .data$prop_upper > 0.5  ~  1,
-          .data$prop_upper < 0.5  ~ -1,
-          TRUE                    ~  0  # near 0.5
-        ),
-
-        sign_rt = sign(.data$meanRT_lower - .data$meanRT_upper), # positive if upper is faster
-
-        # ----- magnitude components -----
-        # component from proportion: maps [0.5..1] to [min_prop_mag..max_prop_mag]
-        prop_mag = (abs(.data$prop_upper - 0.5)) * (3.0),   # scale_prop
-
-        # component from RT: shorter RTs -> larger magnitude.
-        # use inverse meanRT (normalized) as a cue; avoid div by zero
-        rt_mag = ifelse(is.na(.data$meanRT) | .data$meanRT <= 0, 0,
-                        (1 / .data$meanRT) * 0.4),             # scale_rt
-
-        # combine magnitude (weighted sum)
-        v_raw_mag = .data$prop_mag + .data$rt_mag,
-
-        # ----- final sign and clamp -----
-        chosen_sign = ifelse(.data$sign_prop == 0, .data$sign_rt, .data$sign_prop),
-        v_signed = .data$chosen_sign * .data$v_raw_mag,
-        v_guess = pmin(pmax(.data$v_signed, -5), 5),  # clamp to [-5, 5]
-        v_guess = .data$v_guess * 0.6,
-
-        # a_start: boundary ~ 2 * sdRT (clamped to reasonable range)
-        a_guess = pmin(pmax(.data$sdRT * 2.5, 0.3), 3),
-        a_guess = .data$a_guess * 1.2,
-
-        # t0_start: floor near fast RTs (10th percentile is robust), but kept
-        # below the fastest RT so every trial has a non-zero likelihood at the start
-        t0_guess = pmax(pmin(.data$q10RT, 0.9 * .data$minRT, 1), 0),
-
-        # default small variability starts
+        v_guess = pmin(pmax(ez$v, -5), 5),
+        a_guess = pmin(pmax(ez$a, 0.3), 5),
+        t0_guess = pmin(ez$t0, 0.9 * .data$minRT),
         z_guess = 0.5,
         st0_guess = 0.1,
         sz_guess = 0.1,
         sv_guess = 0.1
-      ) %>%
-      dplyr::select(.data$cond, .data$n_trials, .data$meanRT, .data$sdRT, .data$prop_upper,
-                    .data$v_guess, .data$a_guess, .data$t0_guess, .data$z_guess,
-                    .data$st0_guess, .data$sz_guess, .data$sv_guess)
+      )
 
-    # ---------- 5) If any conditions are very sparse, give a fallback start ----------
-    # e.g., if n_trials < 10 or prop_upper is NA, set sensible defaults
+    # ---------- 5) Fallback starts where EZ is undefined or implausible ----------
     cond_summaries <- cond_summaries %>%
       dplyr::mutate(
-        v_guess = ifelse(is.na(.data$v_guess) | .data$n_trials < 8,
-                         0.5 * sign(.data$prop_upper - 0.5 + 1e-6),
-                         .data$v_guess),
-        a_guess = ifelse(is.na(.data$a_guess) | .data$n_trials < 8, 1.0, .data$a_guess),
-        # t0 is based on the fastest RTs, which stay informative even for sparse conditions
-        t0_guess = ifelse(is.na(.data$t0_guess), 0.2, .data$t0_guess)
+        v_guess = ifelse(is.na(.data$v_guess), 0.5 * sign(.data$prop_upper - 0.5 + 1e-6), .data$v_guess),
+        a_guess = ifelse(is.na(.data$a_guess), 1.0, .data$a_guess),
+        # a non-positive EZ t0 (e.g. strongly skewed RTs) falls back to the fast-RT floor
+        t0_guess = ifelse(is.na(.data$t0_guess) | .data$t0_guess <= 0,
+                          pmin(.data$q10RT, 0.9 * .data$minRT), .data$t0_guess)
       )
 
     # ---------- 6) Join back to trials and create trial-level start vectors ----------
@@ -738,15 +708,83 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       cat("======================================\n\n")
     }
 
-    # fit the model
-    fit <- nlminb(start_i, objective = ll_fun,
-                  RT = data.to.model[["RT"]], response = data.to.model[["response"]],
-                  a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
-                  precision = precision, stop_on_error = stop_on_error,
-                  param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
-                  control = list(iter.max = 10000, eval.max = 10000),
-                  lower = lower_bounds,
-                  upper = upper_i)
+    # fit the model from a given starting vector
+    run_fit <- function(start_vals) {
+      nlminb(start_vals, objective = ll_fun,
+             RT = data.to.model[["RT"]], response = data.to.model[["response"]],
+             a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
+             precision = precision, stop_on_error = stop_on_error,
+             param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
+             control = list(iter.max = 10000, eval.max = 10000),
+             lower = lower_bounds,
+             upper = upper_i)
+    }
+
+    # Alternative starting vector number k (k >= 1), spread over the plausible parameter
+    # space with a Halton sequence (one prime base per parameter type, so all conditions of
+    # a parameter move together and the EZ pattern across conditions is kept). a and v are
+    # scaled by 0.5-2 times their EZ start; the others cover their usual range. Deterministic,
+    # so results are reproducible and the user's random seed is untouched.
+    par_types <- vapply(list_with_split_pars, `[`, character(1), 1)
+    alternative_start <- function(k) {
+      s <- start_i
+      primes <- c(a = 2, t0 = 3, z = 5, v = 7, st0 = 11, sz = 13, sv = 17)
+      for (p in seq_along(param_names)) {
+        type <- par_types[p]
+        u <- halton(k, primes[[type]])
+        s[p] <- switch(type,
+          a   = start_i[p] * 2^(2 * u - 1),
+          v   = start_i[p] * 2^(2 * u - 1),
+          t0  = upper_i[p] * (0.2 + 0.75 * u),
+          z   = 0.3 + 0.4 * u,
+          st0 = 0.3 * u,
+          sv  = 2.5 * u,
+          sz  = {
+            # sz must stay below 2 * min(z, a - z) on the absolute scale to be valid
+            a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
+            z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
+            0.9 * u * 2 * min(z_mean, 1 - z_mean) * a_mean
+          })
+      }
+      pmin(pmax(s, lower_bounds), upper_i)
+    }
+
+    fit <- run_fit(start_i)
+    n_runs <- 1
+    replicated <- NA
+
+    # If the fit did not converge, retry (up to max_retries further optimizer runs):
+    # 1) restart the optimizer from where it stopped, which often completes a fit that
+    #    stopped early;
+    # 2) if that does not converge either, fit from alternative starting points until the
+    #    best converged solution has been reached from two independent starting points,
+    #    which indicates it is the global optimum rather than a local one.
+    # The fit with the highest likelihood is kept.
+    if (fit$convergence != 0 && max_retries > 0) {
+      restarted <- run_fit(fit$par)
+      n_runs <- n_runs + 1
+      if (restarted$objective <= fit$objective) fit <- restarted
+
+      if (fit$convergence != 0) {
+        start_optima <- fit$objective         # best solution from each independent start
+        start_converged <- FALSE
+        replicated <- FALSE
+        k <- 0
+        while (n_runs <= max_retries && !replicated) {
+          k <- k + 1
+          candidate <- run_fit(alternative_start(k))
+          n_runs <- n_runs + 1
+          start_optima <- c(start_optima, candidate$objective)
+          start_converged <- c(start_converged, candidate$convergence == 0)
+          if (candidate$objective < fit$objective) fit <- candidate
+          replicated <- fit$convergence == 0 &&
+            sum(start_converged & abs(start_optima - fit$objective) < 0.01) >= 2
+        }
+      }
+    }
+
+    fit_info[loopCount, ] <- list(i, n_runs, fit$convergence, replicated, fit$message)
+
     # save to empirical_ests
     parms <- fit$par
     paramEsts[loopCount,"ID"] <- i
@@ -769,6 +807,15 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   close(pb)
 
   # SECTION I: ORGANIZE OUTPUT TABLE AND CREATE SUMMARY TABLE
+
+  # Report participants that needed retries or still did not converge
+  n_retried <- sum(fit_info$optimizer_runs > 1)
+  n_failed <- sum(fit_info$converge != 0)
+  if (n_retried > 0) {
+    message(n_retried, " participant(s) needed more than one optimizer run; ", n_failed,
+            " did not converge after retries. See results$fit_info for details.")
+  }
+  names(fit_info)[names(fit_info) == "ID"] <- sub_id
 
   # Reorder the columns and rename subject ID if it was specified as custom
   desired_order <- c("ID", col_names, "converge", "LLE", "AIC", "BIC")
@@ -815,7 +862,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       cell_parameters = cell_parameters
     ),
     data = processed_data,
-    convergence = table(paramEsts$converge)
+    convergence = table(paramEsts$converge),
+    fit_info = fit_info
   )
 
   class(results) <- "driftd_results"
