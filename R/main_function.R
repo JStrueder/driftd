@@ -30,12 +30,12 @@
 #' @param precision Numeric: Precision parameter for \code{rtdists::ddiffusion}. Default is 3.
 #' @param stop_on_error Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
-#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge. The first retry restarts the optimizer from where it stopped; further retries start from alternative starting values until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
+#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is exactly 0. Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
 #' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
 #'
-#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped; if that fails, the model is refitted from alternative starting values spread over the plausible parameter space with a deterministic Halton sequence, until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
+#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is exactly 0 (where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
 #' @return A list of class \code{driftd_results} containing:
 #' \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
@@ -43,7 +43,7 @@
 #' \item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 #' \item{data}{The processed data frame used for fitting.}
 #' \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
-#' \item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no alternative starts were needed), and the \code{nlminb} message.}
+#' \item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no retries were needed), and the \code{nlminb} message.}
 #' @export
 #'
 #' @importFrom rtdists ddiffusion
@@ -749,37 +749,62 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       pmin(pmax(s, lower_bounds), upper_i)
     }
 
+    # Starting vector that moves sv and sz estimates stuck at 0 to clearly positive values.
+    # sv and sz spread drift and starting point symmetrically, so near 0 they change the
+    # likelihood only quadratically: its slope at exactly 0 is zero, and the optimizer can
+    # report convergence there even when a positive value fits better.
+    nudged_start <- function(pars) {
+      s <- pars
+      s[par_types == "sv" & s <= 1e-6] <- 1
+      if (any(par_types == "sz" & s <= 1e-6)) {
+        a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
+        z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
+        s[par_types == "sz" & s <= 1e-6] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
+      }
+      pmin(pmax(s, lower_bounds), upper_i)
+    }
+    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-6)
+
     fit <- run_fit(start_i)
     n_runs <- 1
     replicated <- NA
 
-    # If the fit did not converge, retry (up to max_retries further optimizer runs):
-    # 1) restart the optimizer from where it stopped, which often completes a fit that
-    #    stopped early;
-    # 2) if that does not converge either, fit from alternative starting points until the
-    #    best converged solution has been reached from two independent starting points,
-    #    which indicates it is the global optimum rather than a local one.
+    # Retry (up to max_retries further optimizer runs) if the fit did not converge or an sv
+    # or sz estimate is exactly 0:
+    # 1) if it did not converge, restart the optimizer from where it stopped, which often
+    #    completes a fit that stopped early;
+    # 2) fit from further starting points (first with sv/sz stuck at 0 moved to positive
+    #    values, then alternative starting values) until the best converged solution has
+    #    been reached from two independent starting points, which indicates it is the
+    #    global optimum rather than a local one.
     # The fit with the highest likelihood is kept.
-    if (fit$convergence != 0 && max_retries > 0) {
-      restarted <- run_fit(fit$par)
-      n_runs <- n_runs + 1
-      if (restarted$objective <= fit$objective) fit <- restarted
-
+    if ((fit$convergence != 0 || stuck_at_zero(fit)) && max_retries > 0) {
       if (fit$convergence != 0) {
-        start_optima <- fit$objective         # best solution from each independent start
-        start_converged <- FALSE
-        replicated <- FALSE
-        k <- 0
-        while (n_runs <= max_retries && !replicated) {
+        restarted <- run_fit(fit$par)
+        n_runs <- n_runs + 1
+        if (restarted$objective <= fit$objective) fit <- restarted
+      }
+
+      start_optima <- fit$objective           # best solution from each independent start
+      start_converged <- fit$convergence == 0
+      replicated <- FALSE
+      tried_nudge <- FALSE
+      k <- 0
+      while (n_runs <= max_retries && !replicated) {
+        if (!tried_nudge && stuck_at_zero(fit)) {
+          next_start <- nudged_start(fit$par)
+          tried_nudge <- TRUE
+        } else {
           k <- k + 1
-          candidate <- run_fit(alternative_start(k))
-          n_runs <- n_runs + 1
-          start_optima <- c(start_optima, candidate$objective)
-          start_converged <- c(start_converged, candidate$convergence == 0)
-          if (candidate$objective < fit$objective) fit <- candidate
-          replicated <- fit$convergence == 0 &&
-            sum(start_converged & abs(start_optima - fit$objective) < 0.01) >= 2
+          next_start <- alternative_start(k)
         }
+        candidate <- run_fit(next_start)
+        n_runs <- n_runs + 1
+        start_optima <- c(start_optima, candidate$objective)
+        start_converged <- c(start_converged, candidate$convergence == 0)
+        if (candidate$objective < fit$objective) fit <- candidate
+        replicated <- fit$convergence == 0 &&
+          sum(start_converged & abs(start_optima - fit$objective) < 0.01) >= 2
       }
     }
 
