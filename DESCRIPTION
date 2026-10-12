@@ -17,6 +17,9 @@ Imports:
     tibble
 Depends: 
     R (>= 3.5)
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
 LazyData: true
 URL: https://github.com/JStrueder/driftd
 BugReports: https://github.com/JStrueder/driftd/issues
