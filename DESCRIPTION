@@ -1,22 +1,23 @@
 Package: driftd
-Title: Easy Diffusion Model Fitting (via rtdists) and Posterior Predictive Checks
+Title: Easy Diffusion Model Fitting and Model Checks via 'rtdists'
 Version: 0.0.0.9000
 Authors@R: 
     person("Jeremy", "Strueder", , "jstrueder@iese.edu", role = c("aut", "cre"))
-Description: Meta-wrapper package built upon the core functionality of rtdists for fitting drift-diffusion models to behavioral data. It simplifies the complex steps of maximum-likelihood estimation by automatically generating the negative log-likelihood function to be minimized. The package handles individual participant-level fitting, manages parameter-to-condition mapping, and aggregates results. Beyond fitting, driftd provides streamlined functions for data simulation using the resulting parameter estimates and offers basic posterior predictive checks (PPC) via plotting methods to easily assess model goodness-of-fit at the group, condition, and participant level. 
+Description: Meta-wrapper package built upon the core functionality of rtdists for fitting drift-diffusion models to behavioral data. It simplifies the complex steps of maximum-likelihood estimation by automatically generating the negative log-likelihood function to be minimized. The package handles individual participant-level fitting, manages parameter-to-condition mapping, and aggregates results. Beyond fitting, driftd provides standard errors of the estimates, data simulation from the fitted model, and checks of model fit that compare observed and predicted response probabilities and RT quantiles with prediction intervals, including quantile-probability plots, at the group, condition, and participant level. 
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
 Imports: 
     dplyr,
+    ggplot2,
     gt,
     numDeriv,
     rlang,
     rtdists,
     tibble
 Depends: 
-    R (>= 3.5)
+    R (>= 3.6)
 Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
