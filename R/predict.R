@@ -249,7 +249,7 @@ aggregate.driftd_prediction <- function(x, by = NULL, ...) {
 #'
 #' @details
 #' If the model describes a participant's data well, the proportion of statistics outside
-#' the intervals should be close to \code{1 - level} (e.g. 5\%). Statistics within a
+#' the intervals should be close to \code{1 - level} (e.g. 5%). Statistics within a
 #' participant are correlated, so this is a descriptive screening measure, not a test.
 #'
 #' @export

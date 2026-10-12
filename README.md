@@ -26,7 +26,7 @@ Development version from GitHub:
 devtools::install_github("JStrueder/driftd")
 ```
 
-## Quick Example: Fitting, Checking and Comparing Models
+## Quick Example: Fitting, Checking, Comparing and Validating Models
 
 This example demonstrates the typical workflow. Fitting can be slow, so
 the fitting step is shown with `eval = FALSE`. Use the included example
@@ -86,6 +86,17 @@ results_v <- driftd(data = example_data, sub_id = "ID", response = "R", rt = "RT
 cmp <- compare_models(drift_only = results_v, drift_and_bias = results)
 cmp                    # summed AIC/BIC, participants per best model, likelihood-ratio test
 plot(cmp)              # BIC differences per participant
+
+# Parameter recovery: can the parameters be recovered with this design and trial count?
+rec <- recover_parameters(results, seed = 1)
+rec                    # correlation, bias and RMSE of true vs recovered values
+plot(rec)
+
+# Model recovery: can the compared models be told apart? (slow: fits every model to data
+# simulated from every model)
+mrec <- recover_models(drift_only = results_v, drift_and_bias = results, seed = 1)
+mrec                   # confusion matrix: generating vs selected model
+plot(mrec)
 
 # Simulate replicate datasets from the fitted model
 sims <- simulate(results, nsim = 10, seed = 1)

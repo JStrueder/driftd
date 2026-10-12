@@ -31,6 +31,7 @@
 #' @param stop_on_error Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
 #' @param compute_se Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).
+#' @param ask Logical: if TRUE (default) and R is running interactively, ask for confirmation before fitting when the pre-fit checks issue warnings (e.g. few trials per condition). Set to FALSE to always continue.
 #' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is exactly 0. Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
@@ -38,7 +39,7 @@
 #'
 #' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is exactly 0 (where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
-#' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95\% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
+#' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
 #'
 #' @return A list of class \code{driftd_results} containing:
 #' \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
@@ -91,7 +92,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
                    max_retries = 5,
 
-                   compute_se = TRUE
+                   compute_se = TRUE,
+
+                   ask = TRUE
 
 )
 {
@@ -158,6 +161,16 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   if (length(na_vary) > 0) {
     stop("NA values found in condition column(s): ", paste(na_vary, collapse = ", "))
   }
+
+  # The model specification, stored so that the same model can be refitted (e.g. to
+  # simulated data for parameter and model recovery)
+  model_spec <- list(vary_a = vary_a, vary_t0 = vary_t0, vary_z = vary_z, vary_v = vary_v,
+                     vary_st0 = vary_st0, vary_sz = vary_sz, vary_sv = vary_sv,
+                     fix_a = fix_a, fix_t0 = fix_t0, fix_z = fix_z, fix_v = fix_v,
+                     fix_st0 = fix_st0, fix_sz = fix_sz, fix_sv = fix_sv,
+                     a_fixed = a_fixed, t0_fixed = t0_fixed, z_fixed = z_fixed, v_fixed = v_fixed,
+                     st0_fixed = st0_fixed, sz_fixed = sz_fixed, sv_fixed = sv_fixed,
+                     precision = precision, stop_on_error = stop_on_error, max_retries = max_retries)
 
   # Validate parameter bounds
   if (a_fixed <= 0) stop("a_fixed must be positive")
@@ -245,7 +258,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                                     fix_sz, sz_fixed)
 
   # Ask for confirmation
-  if (warnings_issued && interactive()) {
+  if (warnings_issued && ask && interactive()) {
     cat("\n")
     msg <- readline("Do you want to continue with model fitting? (y/n): ")
     if (tolower(msg) != "y") {
@@ -969,6 +982,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       cell_parameters = cell_parameters,
       cells = cells_table,
       parameters = parameter_info,
+      model = model_spec,
       condition_columns = conditions,
       columns = list(sub_id = S, response = R, rt = React),
       precision = precision
