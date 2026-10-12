@@ -4,7 +4,6 @@
 # driftd
 
 <!-- badges: start -->
-
 <!-- badges: end -->
 
 driftd provides a streamlined workflow for fitting Drift‑Diffusion
