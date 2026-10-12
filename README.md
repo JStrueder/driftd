@@ -4,7 +4,6 @@
 # driftd
 
 <!-- badges: start -->
-
 <!-- badges: end -->
 
 driftd provides a streamlined workflow for fitting Drift‑Diffusion
@@ -57,6 +56,7 @@ results <- driftd(
 
 # Examine results
 results$individual_estimates
+results$standard_errors   # asymptotic standard errors (see ?driftd)
 results$summary
 
 # Posterior predictive check (simulate 1 dataset)

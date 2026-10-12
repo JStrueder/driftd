@@ -30,6 +30,7 @@
 #' @param precision Numeric: Precision parameter for \code{rtdists::ddiffusion}. Default is 3.
 #' @param stop_on_error Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
+#' @param compute_se Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).
 #' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is exactly 0. Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
@@ -37,13 +38,17 @@
 #'
 #' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is exactly 0 (where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
+#' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95\% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
+#'
 #' @return A list of class \code{driftd_results} containing:
 #' \item{individual_estimates}{A data frame with estimated parameters, convergence status, Log-Likelihood (LLE), AIC, and BIC for each participant.}
 #' \item{summary}{A data frame with mean and standard deviation of all estimated parameters across participants.}
 #' \item{settings}{A list summarizing the model structure (varying and fixed parameters), including \code{cell_parameters}, a data frame recording which parameter applies in each condition cell.}
 #' \item{data}{The processed data frame used for fitting.}
 #' \item{convergence}{A table summarizing the convergence codes from \code{nlminb}.}
-#' \item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no retries were needed), and the \code{nlminb} message.}
+#' \item{standard_errors}{A data frame with the same layout as \code{individual_estimates} (one column per estimated parameter) containing the standard errors. \code{NA} for parameters at a bound, and for all parameters of a participant if the Hessian is not positive definite (see \code{fit_info$se_status}).}
+#' \item{vcov}{A list with, per participant (named by ID), the estimated variance-covariance matrix of the parameters that have standard errors, or \code{NULL}. Needed for standard errors of functions of several parameters (e.g. differences between conditions).}
+#' \item{fit_info}{A data frame with, per participant, the number of optimizer runs, the final convergence code, whether the best solution was reached from two independent starting points (\code{NA} if no retries were needed), the \code{nlminb} message, and the status of the standard error computation.}
 #' @export
 #'
 #' @importFrom rtdists ddiffusion
@@ -51,7 +56,7 @@
 #' @importFrom rlang sym
 #' @importFrom tibble tibble
 #' @importFrom gt gt tab_spanner fmt_number
-#' @importFrom stats nlminb sd quantile relevel
+#' @importFrom stats nlminb sd quantile relevel setNames
 #' @importFrom utils txtProgressBar setTxtProgressBar head
 driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
@@ -84,7 +89,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
                    print_starting_vals = FALSE,
 
-                   max_retries = 5
+                   max_retries = 5,
+
+                   compute_se = TRUE
 
 )
 {
@@ -217,8 +224,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       data$temp_cond <- NULL
     }
 
-    # Participant checks (total trials per participant)
-    participant_counts <- table(data[[sub_id]])
+    # Participant checks (total trials per participant). Counted on the IDs as text so
+    # that unused levels of a factor ID column are not reported as participants with 0 trials.
+    participant_counts <- table(as.character(data[[sub_id]]))
     small_participants <- participant_counts[participant_counts < 20]
     if (length(small_participants) > 0) {
       message("WARNING: Some participants have very few total trials (<20): ",
@@ -545,7 +553,11 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   paramEsts <- data.frame(matrix(NA, ncol=Nparams+Nfixed+5))
   names(paramEsts) <- c("ID", names(start), names(fixed_par_vals), "converge", "LLE", "AIC", "BIC")
   fit_info <- data.frame(ID = RPlist, optimizer_runs = NA_integer_,
-                         converge = NA_integer_, best_replicated = NA, message = NA_character_)
+                         converge = NA_integer_, best_replicated = NA, message = NA_character_,
+                         se_status = NA_character_)
+  seEsts <- data.frame(matrix(NA_real_, nrow = length(RPlist), ncol = Nparams + 1))
+  names(seEsts) <- c("ID", names(start))
+  vcov_list <- list()
 
   # SECTION H: FIT THE MODEL FOR EACH PARTICIPANT AND DUMP RESULTS INTO OUTPUT TABLE
 
@@ -808,7 +820,55 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       }
     }
 
-    fit_info[loopCount, ] <- list(i, n_runs, fit$convergence, replicated, fit$message)
+    # ---------- Standard errors ----------
+    # SEs are the square roots of the diagonal of the inverse Hessian of the negative
+    # log-likelihood at the estimates (the observed Fisher information), computed numerically
+    # with Richardson extrapolation (numDeriv). The Hessian is evaluated with at least
+    # precision 4, because the less precise numerical integration at precision 3 noticeably
+    # distorts the second derivatives when sv or sz are estimated.
+    # Wald SEs require the estimate to lie inside its bounds. Parameters at (within 0.001 of)
+    # a bound, e.g. sv = 0 or t0 at the fastest RT, get no SE, and the SEs of the other
+    # parameters are computed with them held at their estimates.
+    se <- setNames(rep(NA_real_, length(param_names)), param_names)
+    vcov_i <- NULL
+    se_status <- "not computed"
+    if (compute_se) {
+      at_bound <- (fit$par - lower_bounds < 1e-3) | (upper_i - fit$par < 1e-3)
+      free <- which(!at_bound)
+      bound_note <- if (any(at_bound)) {
+        paste0("no SE at bound: ", paste(param_names[at_bound], collapse = ", "))
+      } else NULL
+      se_status <- if (is.null(bound_note)) "ok" else bound_note
+      if (length(free) > 0) {
+        nll_free <- function(x) {
+          p <- fit$par
+          p[free] <- x
+          ll_fun(p, RT = data.to.model[["RT"]], response = data.to.model[["response"]],
+                 a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
+                 precision = max(precision, 4), stop_on_error = stop_on_error,
+                 param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars)
+        }
+        H <- tryCatch(numDeriv::hessian(nll_free, fit$par[free]), error = function(e) NULL)
+        if (is.null(H) || any(!is.finite(H))) {
+          se_status <- paste(c("Hessian could not be computed", bound_note), collapse = "; ")
+        } else {
+          H <- (H + t(H)) / 2
+          if (min(eigen(H, symmetric = TRUE, only.values = TRUE)$values) <= 0) {
+            # not a proper maximum (or a parameter is not identified): no valid SEs
+            se_status <- paste(c("Hessian not positive definite", bound_note), collapse = "; ")
+          } else {
+            vcov_i <- solve(H)
+            dimnames(vcov_i) <- list(param_names[free], param_names[free])
+            se[free] <- sqrt(diag(vcov_i))
+          }
+        }
+      }
+    }
+    seEsts[loopCount, "ID"] <- i
+    seEsts[loopCount, param_names] <- se
+    vcov_list[as.character(i)] <- list(vcov_i)
+
+    fit_info[loopCount, ] <- list(i, n_runs, fit$convergence, replicated, fit$message, se_status)
 
     # save to empirical_ests
     parms <- fit$par
@@ -841,6 +901,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
             " did not converge after retries. See results$fit_info for details.")
   }
   names(fit_info)[names(fit_info) == "ID"] <- sub_id
+  seEsts$ID <- fit_info[[sub_id]]
+  names(seEsts)[names(seEsts) == "ID"] <- sub_id
 
   # Reorder the columns and rename subject ID if it was specified as custom
   desired_order <- c("ID", col_names, "converge", "LLE", "AIC", "BIC")
@@ -888,7 +950,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     ),
     data = processed_data,
     convergence = table(paramEsts$converge),
-    fit_info = fit_info
+    fit_info = fit_info,
+    standard_errors = seEsts,
+    vcov = vcov_list
   )
 
   class(results) <- "driftd_results"

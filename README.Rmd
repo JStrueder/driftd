@@ -63,6 +63,7 @@ results <- driftd(
 
 # Examine results
 results$individual_estimates
+results$standard_errors   # asymptotic standard errors (see ?driftd)
 results$summary
 
 # Posterior predictive check (simulate 1 dataset)
@@ -88,4 +89,4 @@ citation("driftd")
 
 ## Contact and issues
 
-- Maintainer: J. D. Strueder (<jeremy-strueder@uiowa.edu>)  
+- Maintainer: J. D. Strueder (<jstrueder@iese.edu>)  
