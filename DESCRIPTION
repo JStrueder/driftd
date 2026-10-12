@@ -19,7 +19,10 @@ Imports:
 Depends: 
     R (>= 3.6)
 Suggests: 
+    knitr,
+    rmarkdown,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Config/testthat/edition: 3
 LazyData: true
 URL: https://github.com/JStrueder/driftd

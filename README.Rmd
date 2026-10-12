@@ -34,6 +34,13 @@ Development version from GitHub:
 devtools::install_github("JStrueder/driftd")
 ```
 
+To also install the vignette, a complete worked analysis from the data to reporting:
+
+```r
+devtools::install_github("JStrueder/driftd", build_vignettes = TRUE)
+vignette("driftd", package = "driftd")
+```
+
 ## Quick Example: Fitting, Checking, Comparing and Validating Models
 
 This example demonstrates the typical workflow. Fitting can be slow, so the fitting step is shown with `eval = FALSE`. Use the included example dataset to follow along.

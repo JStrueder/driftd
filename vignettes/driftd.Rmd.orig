@@ -1,0 +1,389 @@
+---
+title: "A complete diffusion model analysis with driftd"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{A complete diffusion model analysis with driftd}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<!--
+This vignette is precomputed because the analysis takes about 1-2 hours to run.
+Edit driftd.Rmd.orig (not driftd.Rmd) and rebuild driftd.Rmd from the vignettes directory with
+
+  knitr::knit("driftd.Rmd.orig", output = "driftd.Rmd")
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>", fig.path = "figures/driftd-", dpi = 96,
+  fig.width = 7, fig.height = 4.5, out.width = "100%", cache.path = "cache/"
+)
+options(width = 100)
+```
+
+This vignette walks through a complete diffusion model analysis with **driftd**, from
+the data to results that can be reported in a paper:
+
+1. preparing the data,
+2. specifying and fitting models,
+3. checking how well a model describes the data,
+4. comparing models that answer the research question,
+5. checking that parameters and models can be recovered,
+6. analysing the parameter estimates, and
+7. what to report.
+
+driftd fits the diffusion model separately to each participant by maximum likelihood,
+using the densities of the rtdists package. Results for the whole sample are then obtained
+by analysing the individual estimates with standard statistics (a *two-stage* approach). This
+is a common, well-established approach for experiments with a moderate to large number of
+trials per participant. It is not a hierarchical model: participants are not estimated jointly.
+
+```{r load}
+library(driftd)
+```
+
+# 1. The data
+
+The example data come from a study on *wishful predictions* (Strueder et al., 2025).
+On each trial, participants saw a grid of squares in two colours and predicted the colour of a
+randomly selected square. One colour was the *critical* outcome, associated with a gain
+(`val = "pos"`) or a loss (`val = "neg"`); the other colour was neutral. The proportion of
+squares in the critical colour, `prob`, varied from .40 to .60, so `prob` is the objective
+probability of the critical outcome.
+
+```{r data}
+data(example_data)
+head(example_data)
+```
+
+driftd needs one row per trial with:
+
+* a **participant identifier** (here `ID`),
+* the **response**, coded `0`/`1` or `"lower"`/`"upper"` (here `R`: 1 = predicted the
+  critical outcome, which becomes the upper boundary of the diffusion process),
+* the **response time** in seconds (here `RT`; RTs in milliseconds are detected and
+  converted), and
+* the **condition columns** the parameters may depend on (here `val` and `prob`).
+
+The response coding determines how the parameters are interpreted. Here the boundaries are
+the two possible predictions, so a starting point `z` above .5 is a bias towards predicting
+the critical outcome, and a positive drift rate `v` means evidence accumulates towards
+predicting it.
+
+```{r design}
+nrow(example_data)
+length(unique(example_data$ID))
+table(example_data$val, example_data$prob)
+range(table(example_data$ID))   # trials per participant
+```
+
+The 30 participants contributed 326 to 397 trials each, about 35 per condition.
+
+**Data screening is the researcher's responsibility.** Maximum likelihood estimation is
+sensitive to contaminant responses (fast guesses, lapses of attention), so RTs should be
+screened before fitting, and the criteria should be reported. driftd does not exclude trials or
+participants. In these data, the fastest RT is `r round(min(example_data$RT) * 1000)` ms,
+consistent with a lower cutoff of 200 ms having been applied:
+
+```{r screening}
+summary(example_data$RT)
+```
+
+The proportions of critical-outcome predictions show the effect of interest: at every level of
+`prob`, the critical outcome is predicted more often when it is a gain than when it is a loss.
+
+```{r proportions}
+round(tapply(example_data$R, list(val = example_data$val, prob = example_data$prob), mean), 2)
+```
+
+The diffusion model can decompose this effect: valence could shift the **starting point**
+(participants start closer to predicting a gain before evaluating the stimulus) and/or the
+**drift rate** (the same stimulus is evaluated as more favourable to the gain).
+
+# 2. Specifying models
+
+A model is specified by which parameters vary across which condition columns
+(`vary_a`, `vary_t0`, `vary_z`, `vary_v`, ...) and which are fixed (`fix_*` with values
+`*_fixed`). By default, `a`, `t0`, `z` and `v` are estimated once per participant, and the
+across-trial variabilities `st0`, `sz` and `sv` are fixed at 0. A parameter that varies is
+estimated separately for every combination of levels of its condition columns.
+
+The research question translates into four models. In all of them the drift rate depends on the
+objective probability, `prob`:
+
+| Model | Starting point `z` | Drift rate `v` | Valence affects |
+|---|---|---|---|
+| `none` | one value | by `prob` | nothing |
+| `bias` | by `val` | by `prob` | starting point only |
+| `drift` | one value | by `prob` x `val` | drift rate only |
+| `drift_bias` | by `val` | by `prob` x `val` | both |
+
+# 3. Fitting
+
+We start with the most complete model. Fitting takes a few minutes for all participants;
+driftd reports progress and a summary table while it runs.
+
+```{r fit-drift-bias, cache = TRUE, results = "hide", message = FALSE}
+fit_drift_bias <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
+                         vary_z = "val", vary_v = c("prob", "val"))
+```
+
+Each participant has 14 free parameters: `a`, `t0`, two starting points and ten drift rates.
+Starting values are derived from the data with EZ-diffusion (Wagenmakers et al., 2007). If an
+optimisation does not converge, or an estimate of `sv` or `sz` gets stuck at 0, driftd retries
+from other starting values until the best solution has been found from two independent starting
+points. Always check convergence before interpreting the estimates:
+
+```{r convergence}
+fit_drift_bias$convergence                       # optimizer convergence codes (0 = converged)
+table(optimizer_runs = fit_drift_bias$fit_info$optimizer_runs)
+table(fit_drift_bias$fit_info$se_status)
+```
+
+The mean and standard deviation of each parameter across participants:
+
+```{r summary}
+fit_drift_bias$summary
+```
+
+For further analyses, `estimates()` returns the estimates in long format, with the condition
+values each parameter applies to and its standard error (from the numerical Hessian of the
+log-likelihood):
+
+```{r estimates}
+est <- estimates(fit_drift_bias)
+head(est, 8)
+```
+
+`estimates(fit, format = "cells")` returns one row per participant and condition with the value
+of every parameter in that condition, which is the format needed for ANOVAs and mixed models
+(section 6).
+
+# 4. Checking model fit
+
+Before interpreting parameters, check that the model describes the data. `predict()` computes,
+for every participant and condition, the observed and predicted probability of each response
+and the .1, .3, .5, .7 and .9 quantiles of its RT distribution. Predictions are exact. Prediction
+intervals, obtained by simulating 200 datasets with the observed number of trials, show how much
+the observed values are expected to vary if the model is correct.
+
+```{r predict-drift-bias, cache = TRUE}
+pred_drift_bias <- predict(fit_drift_bias, seed = 1)
+```
+
+Response probabilities are described well:
+
+```{r fit-choice}
+plot(pred_drift_bias, type = "choice",
+     response_labels = c(upper = "critical outcome", lower = "neutral outcome"))
+```
+
+The RT quantile plot shows each response in a column and each level of `prob` in a row. Large
+points are observed quantiles averaged over participants, crosses are predictions, bars are
+prediction intervals and small points are individual participants:
+
+```{r fit-rt, fig.height = 9}
+plot(pred_drift_bias, response_labels = c(upper = "critical", lower = "neutral"))
+```
+
+The fit is good for the central quantiles, but the model predicts the slowest responses
+(the .9 quantiles) too slow and the fastest (.1 quantiles) somewhat too fast. The
+observed-versus-predicted plot summarises this for all conditions:
+
+```{r fit-scatter, fig.width = 9, fig.height = 6}
+plot(pred_drift_bias, type = "scatter")
+```
+
+A common reason for this pattern is that the across-trial variability parameters, fixed at 0 so
+far, are needed. We return to this in section 5.3. `summary()` lists participants by how many of
+their statistics fall outside the prediction intervals (about 5% would be expected by chance):
+
+```{r fit-participants}
+head(summary(pred_drift_bias))
+```
+
+All numbers behind these plots are available for custom plots or reporting:
+
+```{r fit-table}
+head(aggregate(pred_drift_bias), 6)
+```
+
+# 5. Comparing models
+
+## 5.1 Fitting the alternatives
+
+```{r fit-alternatives, cache = TRUE, results = "hide", message = FALSE}
+fit_none  <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
+                    vary_v = "prob")
+fit_bias  <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
+                    vary_z = "val", vary_v = "prob")
+fit_drift <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
+                    vary_v = c("prob", "val"))
+```
+
+## 5.2 Comparison
+
+`compare_models()` sums the log-likelihoods, AIC and BIC over participants (each participant is
+fitted separately), counts how many participants each model describes best, and runs
+likelihood-ratio tests for every pair of nested models:
+
+```{r compare}
+cmp <- compare_models(none = fit_none, bias = fit_bias, drift = fit_drift,
+                      drift_bias = fit_drift_bias)
+cmp
+```
+
+```{r compare-plot, fig.height = 5.5}
+plot(cmp)
+```
+
+The plot shows each participant's BIC difference from their best model, which reveals whether a
+group-level conclusion holds for most participants or is driven by a few. Whether such
+comparisons can be trusted with this design is checked in section 6.
+
+## 5.3 Robustness: across-trial variability in drift
+
+The model fit check showed misfit in the RT tails. Estimating the across-trial variability of the
+drift rate, `sv`, is a standard way to address this, and its effect on the conclusions should be
+checked:
+
+```{r fit-sv, cache = TRUE, results = "hide", message = FALSE}
+fit_drift_bias_sv <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
+                            vary_z = "val", vary_v = c("prob", "val"), fix_sv = FALSE)
+```
+
+```{r compare-sv}
+compare_models(drift_bias = fit_drift_bias, drift_bias_sv = fit_drift_bias_sv)
+```
+
+```{r predict-sv, cache = TRUE}
+pred_drift_bias_sv <- predict(fit_drift_bias_sv, seed = 1)
+```
+
+```{r fit-scatter-sv, fig.width = 9, fig.height = 6}
+plot(pred_drift_bias_sv, type = "scatter")
+```
+
+# 6. Parameter and model recovery
+
+A model comparison or parameter estimate is only informative if the design allows the
+parameters and models to be recovered (Wilson & Collins, 2019).
+
+**Parameter recovery** simulates data from each participant's estimates with the observed number
+of trials, refits the model, and compares the recovered with the true values:
+
+```{r param-recovery, cache = TRUE, message = FALSE}
+rec <- recover_parameters(fit_drift_bias, seed = 1)
+```
+
+```{r param-recovery-show}
+rec
+```
+
+```{r param-recovery-plot, fig.height = 5}
+plot(rec)
+```
+
+Trade-offs between parameters show up as correlated recovery errors:
+
+```{r param-recovery-errors}
+round(rec$error_correlation[1:4, 1:4], 2)
+```
+
+**Model recovery** simulates data from each of the competing models, fits all models to every
+simulated dataset, and records which model is selected. This takes a while, because every model
+is fitted to data from every model:
+
+```{r model-recovery, cache = TRUE, message = FALSE}
+mrec <- recover_models(bias = fit_bias, drift = fit_drift, drift_bias = fit_drift_bias, seed = 1)
+```
+
+```{r model-recovery-show}
+mrec
+```
+
+```{r model-recovery-plot, fig.width = 6, fig.height = 4}
+plot(mrec)
+```
+
+The rows show the model that generated the data and the columns the model selected by BIC for
+each simulated participant. Values close to 1 on the diagonal mean that the models can be told
+apart with this design. Off-diagonal values show which errors to expect, for example a bias of
+BIC towards models with fewer parameters at the level of individual participants.
+
+# 7. Analysing the estimates
+
+In the second stage, the individual estimates are analysed like any other dependent variable.
+Participants whose fits did not converge should be inspected or excluded first.
+
+**Starting point.** Does valence shift the starting point? A paired t-test on the two starting
+points:
+
+```{r z-test}
+z <- subset(estimates(fit_drift_bias), parameter == "z" & converge == 0)
+z_wide <- reshape(z[, c("ID", "val", "estimate")], idvar = "ID", timevar = "val", direction = "wide")
+colMeans(z_wide[, -1])
+t.test(z_wide$estimate.pos, z_wide$estimate.neg, paired = TRUE)
+```
+
+**Drift rate.** How do probability and valence affect the drift rate? A repeated-measures ANOVA on
+the `cells` format:
+
+```{r v-anova}
+cells <- subset(estimates(fit_drift_bias, format = "cells"), converge == 0)
+cells$ID <- factor(cells$ID)
+cells$prob <- factor(cells$prob)
+round(tapply(cells$v, list(val = cells$val, prob = cells$prob), mean), 2)
+summary(aov(v ~ prob * val + Error(ID / (prob * val)), data = cells))
+```
+
+The same data frame can be used with mixed models (e.g. `lme4::lmer(v ~ prob * val + (1 | ID))`),
+and the standard errors in `estimates()` allow weighting by the precision of each estimate.
+
+# 8. What to report
+
+A diffusion model analysis with this approach typically reports:
+
+* **Data preparation:** RT cutoffs and other exclusion criteria, with the number of trials and
+  participants excluded; the response coding (here: the two predictions as boundaries).
+* **Model specification:** which parameters varied across which conditions, which were fixed and
+  at which values, and the scaling convention (driftd and rtdists use a diffusion constant
+  s = 1).
+* **Estimation:** maximum likelihood per participant with rtdists densities, optimisation with
+  `nlminb`, EZ-diffusion starting values with automatic restarts, and how many fits converged
+  (`fit$fit_info`).
+* **Model fit:** observed and predicted response probabilities and RT quantiles (e.g. the
+  `"choice"` and `"rt"` plots), and how misfit was handled.
+* **Model comparison:** summed AIC and BIC, the number of participants best described by each
+  model, and likelihood-ratio tests for nested models.
+* **Recovery:** parameter recovery (correlations of true and recovered values) and, if models
+  are compared, model recovery for the design.
+* **Parameter estimates:** means and SDs per condition (individual estimates in supplementary
+  material), and the second-stage analyses with effect sizes.
+* **Software:** the versions of R, driftd and rtdists (`sessionInfo()`).
+
+```{r session}
+packageVersion("driftd")
+packageVersion("rtdists")
+```
+
+# References
+
+Ratcliff, R., & McKoon, G. (2008). The diffusion decision model: Theory and data for two-choice
+decision tasks. *Neural Computation, 20*, 873-922.
+
+Strueder, J. D., Park, I., Mordkoff, J. T., Pleskac, T. J., & Windschitl, P. D. (2025). The
+cognitive mechanisms behind wishful predictions: A diffusion model decomposition. PsyArXiv.
+https://doi.org/10.31234/osf.io/bt7m5_v1
+
+Voss, A., Nagler, M., & Lerche, V. (2013). Diffusion models in experimental psychology: A
+practical introduction. *Experimental Psychology, 60*, 385-402.
+
+Wagenmakers, E.-J., van der Maas, H. L. J., & Grasman, R. P. P. P. (2007). An EZ-diffusion model
+for response time and accuracy. *Psychonomic Bulletin & Review, 14*, 3-22.
+
+Wilson, R. C., & Collins, A. G. E. (2019). Ten simple rules for the computational modeling of
+behavioral data. *eLife, 8*, e49547.
