@@ -35,8 +35,13 @@
 #'       \code{quantile} (the quantile level, \code{NA} for probabilities);
 #'     \item \code{n_cell} (trials in the cell) and \code{n_response} (trials with this response);
 #'     \item \code{observed}, \code{predicted}, and the prediction interval \code{lower} and
-#'       \code{upper} (\code{NA} if \code{intervals = FALSE}).
+#'       \code{upper} (\code{NA} if \code{intervals = FALSE}). Probabilities are between 0
+#'       and 1; RT quantiles are in seconds (plots show milliseconds by default);
+#'     \item \code{.row}, a row identifier that links each row to its simulated replicates
+#'       (used by \code{aggregate()} and \code{plot()}; keep it when subsetting).
 #'   }
+#'   The result is a data frame and can be filtered, reordered and summarized with base R or
+#'   dplyr, and \code{aggregate()}, \code{summary()} and \code{plot()} still work on subsets.
 #'   Use \code{\link{aggregate.driftd_prediction}} for group-level (averaged) values,
 #'   \code{\link{summary.driftd_prediction}} for a per-participant misfit summary, and
 #'   \code{\link{plot.driftd_prediction}} for plots.
@@ -144,6 +149,10 @@ predict.driftd_results <- function(object, probs = c(0.1, 0.3, 0.5, 0.7, 0.9), i
   if (!is.null(rep_mat)) rep_mat <- rep_mat[ord, , drop = FALSE]
   rownames(res) <- NULL
   names(res)[1] <- id
+  # .row links each row to its simulated replicates, so they stay matched after any
+  # subsetting or reordering of the rows (base R or dplyr)
+  res$.row <- seq_len(nrow(res))
+  if (!is.null(rep_mat)) rownames(rep_mat) <- res$.row
 
   structure(res, class = c("driftd_prediction", "data.frame"), replicates = rep_mat,
             driftd = list(sub_id = id, condition_columns = object$settings$condition_columns,
@@ -183,6 +192,7 @@ predict.driftd_results <- function(object, probs = c(0.1, 0.3, 0.5, 0.7, 0.9), i
 #' @export
 aggregate.driftd_prediction <- function(x, by = NULL, ...) {
   info <- attr(x, "driftd")
+  if (is.null(info)) stop("x must be the output of predict() on a driftd fit")
   if (is.null(by)) by <- info$condition_columns
   bad <- setdiff(by, info$condition_columns)
   if (length(bad) > 0) {
@@ -202,9 +212,8 @@ aggregate.driftd_prediction <- function(x, by = NULL, ...) {
   res$observed <- as.vector(tapply(x_use$observed, group, mean))
   res$predicted <- as.vector(tapply(x_use$predicted, group, mean))
 
-  reps <- attr(x, "replicates")
+  reps <- replicates_for(x, use)
   if (!is.null(reps)) {
-    reps <- reps[use, , drop = FALSE]
     sums <- rowsum(reps, group, na.rm = TRUE, reorder = FALSE)
     counts <- rowsum((!is.na(reps)) * 1, group, reorder = FALSE)
     means <- sums / counts
@@ -328,7 +337,46 @@ simulate.driftd_results <- function(object, nsim = 1, seed = NULL, parameter_unc
 
 
 
+#' @title Subset Model Predictions
+#'
+#' @description
+#' Subsetting a \code{driftd_prediction} object with \code{[} keeps the information needed by
+#' \code{aggregate()}, \code{summary()} and \code{plot()}, for row and column subsets alike.
+#'
+#' @param x An object of class \code{driftd_prediction}.
+#' @param ... Indices passed to the data frame method.
+#'
+#' @return The subset, as a \code{driftd_prediction} object if it is a data frame.
+#' @keywords internal
+#' @export
+`[.driftd_prediction` <- function(x, ...) {
+  out <- NextMethod()
+  if (is.data.frame(out)) {
+    attr(out, "driftd") <- attr(x, "driftd")
+    attr(out, "replicates") <- attr(x, "replicates")
+    class(out) <- class(x)
+  }
+  out
+}
+
+
+
+
 # ---- Internal helpers ---------------------------------------------------------------------
+
+# Simulated replicate statistics for the rows `use` of a prediction table, looked up by the
+# .row column (so they match after subsetting or reordering). NULL if unavailable.
+#' @noRd
+replicates_for <- function(x, use) {
+  reps <- attr(x, "replicates")
+  if (is.null(reps)) return(NULL)
+  if (!".row" %in% names(x)) {
+    warning("The .row column is missing, so prediction intervals for averages cannot be computed.",
+            call. = FALSE)
+    return(NULL)
+  }
+  reps[match(x$.row[use], as.integer(rownames(reps))), , drop = FALSE]
+}
 
 # Column names stored by driftd(); fails clearly for objects from older versions.
 #' @noRd

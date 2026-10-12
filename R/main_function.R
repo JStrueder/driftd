@@ -909,16 +909,16 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   paramEsts <- paramEsts[, desired_order]
   names(paramEsts)[names(paramEsts) == "ID"] <- sub_id
 
-  # calculate means and sd for parameters of model
-  means <- colMeans(paramEsts[, -1], na.rm = TRUE)
-  means <- round(means, digits=2)
-  sd <- apply(paramEsts[, -1], 2, sd, na.rm = TRUE)
-  sd <- round(sd, digits=2)
+  # Mean and SD across participants of each parameter (fit statistics such as the
+  # log-likelihood are reported per participant, not averaged)
+  means <- round(colMeans(paramEsts[, col_names, drop = FALSE], na.rm = TRUE), digits = 2)
+  sd <- round(apply(paramEsts[, col_names, drop = FALSE], 2, sd, na.rm = TRUE), digits = 2)
   # summary table
   summary <- data.frame(
-    Parameter = names(means),
+    Parameter = col_names,
     Mean = means,
-    SD = sd
+    SD = sd,
+    Fixed = !(col_names %in% param_names)
   )
   table <- summary %>%
     gt() %>%
@@ -934,6 +934,19 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   names(processed_data)[names(processed_data) == "RT"] <- React
   names(processed_data)[names(processed_data) == "cond"] <- ".cell"
   processed_data <- cbind(processed_data, data[conditions])
+
+  # One row per parameter column: its type, whether it is fixed, and the condition values it
+  # applies to (NA for condition columns it does not vary across). Used by estimates().
+  parameter_info <- data.frame(name = col_names, parameter = unname(param_type[col_names]),
+                               fixed = !(col_names %in% param_names), stringsAsFactors = FALSE)
+  for (column in conditions) {
+    values <- data[[column]][rep(NA_integer_, length(col_names))]
+    for (k in seq_along(col_names)) {
+      cell <- param_cells[[col_names[k]]]
+      if (!is.null(cell[[column]])) values[k] <- cell[[column]]
+    }
+    parameter_info[[column]] <- values
+  }
 
   # One row per condition cell: its label (.cell) and its condition values
   cells_table <- unique(cbind(data.frame(.cell = cond), data[conditions]))
@@ -955,6 +968,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       n_conditions = length(unique(df.rtdists$cond)),
       cell_parameters = cell_parameters,
       cells = cells_table,
+      parameters = parameter_info,
       condition_columns = conditions,
       columns = list(sub_id = S, response = R, rt = React),
       precision = precision

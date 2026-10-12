@@ -85,6 +85,7 @@ plot.driftd_prediction <- function(x, type = c("rt", "choice", "scatter", "parti
   response <- match.arg(response)
   rt_unit <- match.arg(rt_unit)
   info <- attr(x, "driftd")
+  if (is.null(info)) stop("x must be the output of predict() on a driftd fit")
   intervals <- intervals && isTRUE(info$intervals)
   if (is.null(by)) by <- info$condition_columns
   check_columns(by, info$condition_columns, "by must name condition columns of the fit")
@@ -120,8 +121,8 @@ check_columns <- function(cols, allowed, msg) {
   if (length(bad) > 0) stop(msg, " (not: ", paste(bad, collapse = ", "), ")", call. = FALSE)
 }
 
-# Restrict predictions to one participant and/or to the conditions in `select`, keeping the
-# attributes (and the matching rows of the replicate matrix).
+# Restrict predictions to one participant and/or to the conditions in `select` (replicates
+# stay matched through the .row column).
 #' @noRd
 filter_prediction <- function(x, participant, select) {
   info <- attr(x, "driftd")
@@ -135,12 +136,7 @@ filter_prediction <- function(x, participant, select) {
     for (col in names(select)) keep <- keep & x[[col]] %in% select[[col]]
     if (!any(keep)) stop("No data left after `select`", call. = FALSE)
   }
-  reps <- attr(x, "replicates")
-  out <- x[keep, , drop = FALSE]
-  attr(out, "replicates") <- if (is.null(reps)) NULL else reps[keep, , drop = FALSE]
-  attr(out, "driftd") <- info
-  class(out) <- class(x)
-  out
+  x[keep, , drop = FALSE]
 }
 
 #' @noRd

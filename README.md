@@ -56,14 +56,20 @@ results <- driftd(
 )
 
 # Examine results
-results$individual_estimates
-results$standard_errors   # asymptotic standard errors (see ?driftd)
-results$summary
+results$summary                              # mean and SD of each parameter
+est <- estimates(results)                    # one row per participant and parameter, with SEs
+cells <- estimates(results, format = "cells")  # one row per participant and condition cell
+
+# e.g. a repeated-measures ANOVA on the drift rates
+cells$ID <- factor(cells$ID)
+cells$prob <- factor(cells$prob)
+summary(aov(v ~ prob * val + Error(ID / (prob * val)), data = cells))
 
 # Model fit: observed vs predicted response probabilities and RT quantiles,
 # with prediction intervals from 200 simulated datasets
 pred <- predict(results, seed = 1)
 
+pred                   # one row per participant, condition, response and statistic
 aggregate(pred)        # group averages per condition cell
 summary(pred)          # misfit per participant, worst first
 
