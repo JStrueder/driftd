@@ -644,3 +644,51 @@ plot_ppc_density <- function(observed_data, simulated_data, sub_id, response, rt
   title(main = plot_title, outer = TRUE, cex.main = 1.6)
   par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)  # Reset to default
 }
+
+
+
+
+# Internal: EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007,
+# Psychonomic Bulletin & Review, 14, 3-22) of drift rate, boundary separation, and
+# non-decision time from the proportion of upper-boundary responses and the mean and
+# variance of the RTs (in seconds), with the diffusion coefficient s = 1 used by rtdists.
+# Vectorised over condition cells. Used to derive starting values for the full fit.
+#
+# EZ assumes an unbiased starting point and no between-trial variability, so RTs at both
+# boundaries have the same distribution; RTs from both responses are therefore pooled.
+# Proportions of 0, .5 and 1 are moved by 1/(2n), following the paper's edge correction.
+# Cells where EZ is undefined (fewer than 2 trials, zero RT variance) return NA.
+#' @noRd
+ez_diffusion <- function(prop_upper, mean_rt, var_rt, n_trials) {
+  edge <- 1 / (2 * n_trials)
+  p <- pmin(pmax(prop_upper, edge), 1 - edge)
+  p <- ifelse(abs(p - 0.5) < 1e-12, 0.5 + edge, p)
+  L <- stats::qlogis(p)
+  x <- L * (L * p^2 - L * p + p - 0.5) / var_rt
+  v <- sign(p - 0.5) * x^(1 / 4)
+  a <- L / v
+  y <- -v * a
+  mdt <- (a / (2 * v)) * (1 - exp(y)) / (1 + exp(y))
+  out <- data.frame(v = v, a = a, t0 = mean_rt - mdt)
+  out[!(n_trials >= 2 & is.finite(var_rt) & var_rt > 0), ] <- NA
+  out[!is.finite(as.matrix(out))] <- NA
+  out
+}
+
+
+
+
+# Internal: element k (k >= 1) of the van der Corput sequence in the given prime base.
+# Using a different prime per dimension gives the Halton sequence, a deterministic
+# quasi-random sequence that covers [0, 1)^d more evenly than independent random draws.
+#' @noRd
+halton <- function(k, base) {
+  f <- 1
+  r <- 0
+  while (k > 0) {
+    f <- f / base
+    r <- r + f * (k %% base)
+    k <- k %/% base
+  }
+  r
+}
