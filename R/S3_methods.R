@@ -121,6 +121,7 @@ summary.driftd_results <- function(object, ...) {
 #' for textual output.
 #'
 #' @importFrom graphics par title boxplot stripchart abline barplot text plot
+#' @importFrom grDevices rgb
 #' @export
 plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...) {
   if (type == "parameters") {
@@ -348,83 +349,5 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
             xlab = "Convergence Code", ylab = "Number of Participants")
   } else {
     stop("Unknown plot type. Use 'parameters' or 'convergence'")
-  }
-}
-
-
-
-
-#' @title Plot Posterior Predictive Checks (PPC)
-#'
-#' @description
-#' Visualizes the discrepancy between observed data and model-simulated data
-#' (posterior predictive checks) contained within a \code{driftd_ppc} object.
-#'
-#' @param x An object of class \code{driftd_ppc}, typically the output
-#'   from the \code{\link{posterior_predict}} function.
-#' @param type A \code{character} string specifying the type of PPC visualization.
-#'   Must be one of:
-#'   \itemize{
-#'     \item \code{"summary"} (default): Plots aggregated fit statistics (e.g., mean RT, accuracy)
-#'       comparing observed vs. simulated data across all participants, split by experimental cells.
-#'     \item \code{"participant"}: Plots the observed vs. simulated fit for each
-#'       individual participant (requires the helper function \code{plot_ppc_participant}).
-#'     \item \code{"density"}: Plots the full reaction time (RT) density distributions
-#'       for observed and simulated data, possibly filtered by condition.
-#'   }
-#' @param condition A \code{character} string or \code{NULL} (default). If
-#'   \code{type = "density"} is selected, this can specify a particular
-#'   experimental condition to plot. If \code{NULL}, the density is plotted
-#'   for all aggregated data.
-#' @param ... Further graphical parameters passed to the underlying plotting
-#'   functions.
-#'
-#' @return The function is called for its side effect of creating a plot or plots.
-#'   It invisibly returns \code{NULL}.
-#'
-#' @details
-#' The primary goal of this function is to assess the **goodness-of-fit** of the
-#' diffusion model by visually comparing the raw data to data generated using the
-#' individual parameter estimates.
-#'
-#' The three plot types offer different levels of detail:
-#' \itemize{
-#'   \item \strong{Summary:} Provides a high-level view (e.g., scatter plots of observed vs. simulated means).
-#'   \item \strong{Participant:} Provides participant-level diagnostics (e.g., Q-Q plots).
-#'   \item \strong{Density:} Compares the full shape of the reaction time distributions (e.g., via density plots).
-#' }
-#'
-#' This method relies on three internal helper functions (\code{plot_ppc_summary},
-#' \code{plot_ppc_participant}, and \code{plot_ppc_density}) which are
-#' defined elsewhere in the package.
-#'
-#' @seealso
-#' \code{\link{posterior_predict}} for generating the input object.
-#'
-#' @export
-plot.driftd_ppc <- function(x, type = "summary", condition = NULL, ...) {
-
-  if (!inherits(x, "driftd_ppc")) {
-    stop("x must be of class 'driftd_ppc' from posterior_predict() function")
-  }
-
-  # Extract data and column names
-  observed_data <- x$observed_data
-  simulated_data <- x$simulated_data
-  column_info <- x$column_info
-
-  # Use the stored column names
-  sub_id <- column_info$sub_id
-  response <- column_info$response
-  rt <- column_info$rt
-
-  if (type == "summary") {
-    plot_ppc_summary(observed_data, simulated_data, sub_id, response, rt)
-  } else if (type == "participant") {
-    plot_ppc_participant(observed_data, simulated_data, sub_id, response, rt)
-  } else if (type == "density") {
-    plot_ppc_density(observed_data, simulated_data, sub_id, response, rt, condition)
-  } else {
-    stop("type must be 'summary', 'participant', or 'density'")
   }
 }

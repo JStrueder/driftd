@@ -18,7 +18,7 @@ knitr::opts_chunk$set(
 <!-- badges: start -->
 <!-- badges: end -->
 
-driftd provides a streamlined workflow for fitting Drift‑Diffusion Models (DDMs) to trial‑level RT and binary response data, performing participant‑level maximum‑likelihood fits (via `nlminb`/`rtdists`) and simulation‑based posterior predictive checks (PPCs).
+driftd provides a streamlined workflow for fitting Drift‑Diffusion Models (DDMs) to trial‑level RT and binary response data, performing participant‑level maximum‑likelihood fits (via `nlminb`/`rtdists`) with standard errors, and checks of model fit that compare observed and predicted response probabilities and RT quantiles.
 
 ## Installation
 
@@ -34,7 +34,7 @@ Development version from GitHub:
 devtools::install_github("JStrueder/driftd")
 ```
 
-## Quick Example: Fitting a DDM and Running a Posterior Predictive Check
+## Quick Example: Fitting a DDM and Checking Model Fit
 
 This example demonstrates the typical workflow. Fitting can be slow, so the fitting step is shown with `eval = FALSE`. Use the included example dataset to follow along.
 
@@ -66,17 +66,22 @@ results$individual_estimates
 results$standard_errors   # asymptotic standard errors (see ?driftd)
 results$summary
 
-# Posterior predictive check (simulate 1 dataset)
-ppc <- posterior_predict(results, n_sim = 1)
+# Model fit: observed vs predicted response probabilities and RT quantiles,
+# with prediction intervals from 200 simulated datasets
+pred <- predict(results, seed = 1)
 
-# Plot PPC summary
-plot(ppc, type = "summary")
+aggregate(pred)        # group averages per condition cell
+summary(pred)          # misfit per participant, worst first
 
-# Plot the comparison of observed vs. simulated statistics for each participant
-plot(ppc, type = "participant")
+plot(pred)                                   # quantile-probability plot
+plot(pred, facet = "val")                    # ... split by a condition column
+plot(pred, type = "scatter")                 # observed vs predicted, per statistic
+plot(pred, type = "cdf")                     # RT distributions per condition cell
+plot(pred, type = "participants")            # participants with poor fit
+plot(pred, participant = 3)                  # a single participant
 
-# Plot the comparison of the full RT distributions for a specific condition
-plot(ppc, type = "density", condition = "pos_0.55")
+# Simulate replicate datasets from the fitted model
+sims <- simulate(results, nsim = 10, seed = 1)
 ```
 
 ## License and citation

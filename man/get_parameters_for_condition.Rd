@@ -36,6 +36,6 @@ as \code{NA}) are read from the column named after the parameter itself
 (e.g., \code{st0}).
 
 \strong{Note:} This function is primarily intended for internal use by the
-\code{\link{posterior_predict}} function and is not typically called by end-users.
+\code{\link{predict.driftd_results}} and \code{\link{simulate.driftd_results}}, and is not typically called by end-users.
 }
 \keyword{internal}

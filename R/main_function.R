@@ -469,10 +469,10 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   df.rtdists <- bind_cols(df.rtdists, tracking_cols)
 
   # Record which estimated parameter applies in each condition cell (NA if the parameter
-  # is fixed). posterior_predict() uses this to simulate each cell.
+  # is fixed). predict() and simulate() use this for each cell.
   cells <- unique(cond)
   first_trial <- match(cells, cond)
-  cell_parameters <- data.frame(cond = cells)
+  cell_parameters <- data.frame(.cell = cells)
   for (par in names(vary_list)) {
     candidates <- param_names[param_type[param_names] == par]
     cell_parameters[[par]] <- vapply(first_trial, function(trial) {
@@ -926,11 +926,18 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     fmt_number(columns = c("Mean", "SD"), decimals = 2)
   print(table)
 
-  # Store the processed data for posterior predictive checks
+  # Store the processed data (in seconds) with the original condition columns, used by
+  # predict() and simulate()
   processed_data <- df.rtdists[, 1:4]
   names(processed_data)[names(processed_data) == "ID"] <- S
   names(processed_data)[names(processed_data) == "response"] <- R
   names(processed_data)[names(processed_data) == "RT"] <- React
+  names(processed_data)[names(processed_data) == "cond"] <- ".cell"
+  processed_data <- cbind(processed_data, data[conditions])
+
+  # One row per condition cell: its label (.cell) and its condition values
+  cells_table <- unique(cbind(data.frame(.cell = cond), data[conditions]))
+  rownames(cells_table) <- NULL
 
   results <- list(
     individual_estimates = paramEsts,
@@ -946,7 +953,11 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       ),
       n_participants = length(RPlist),
       n_conditions = length(unique(df.rtdists$cond)),
-      cell_parameters = cell_parameters
+      cell_parameters = cell_parameters,
+      cells = cells_table,
+      condition_columns = conditions,
+      columns = list(sub_id = S, response = R, rt = React),
+      precision = precision
     ),
     data = processed_data,
     convergence = table(paramEsts$converge),

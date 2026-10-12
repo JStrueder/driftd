@@ -6,6 +6,10 @@ test_that("the results object has the documented structure", {
   expect_s3_class(fit, "driftd_results")
   expect_true(all(c("individual_estimates", "summary", "settings", "data", "convergence",
                     "fit_info", "standard_errors", "vcov") %in% names(fit)))
+  # the processed data keep the original condition columns
+  expect_equal(names(fit$data), c("ID", ".cell", "R", "RT", "val", "prob"))
+  expect_equal(fit$settings$condition_columns, c("val", "prob"))
+  expect_equal(nrow(fit$settings$cells), 10)
   expect_equal(nrow(fit$individual_estimates), 2)
   expect_equal(fit$settings$n_participants, 2)
   expect_equal(fit$settings$n_conditions, 10)
@@ -29,28 +33,10 @@ test_that("summary() and individual_estimates() return the stored tables", {
   expect_error(individual_estimates(list()), "driftd_results")
 })
 
-test_that("posterior_predict() simulates one dataset per observed trial", {
-  set.seed(1)
-  utils::capture.output(ppc <- posterior_predict(fit, n_sim = 2))
-  expect_s3_class(ppc, "driftd_ppc")
-  expect_equal(nrow(ppc$simulated_data), 2 * nrow(d))
-  expect_equal(sort(unique(ppc$simulated_data$n_sim)), 1:2)
-  # same number of simulated trials as observed trials in every participant x condition cell
-  obs <- table(ppc$observed_data$ID, ppc$observed_data$cond)
-  sim <- table(ppc$simulated_data$ID, ppc$simulated_data$cond) / 2
-  expect_equal(unclass(sim), unclass(obs))
-  expect_error(posterior_predict(list()), "driftd_results")
-})
-
-test_that("plot methods run without error", {
-  set.seed(1)
-  utils::capture.output(ppc <- posterior_predict(fit))
+test_that("parameter plots run without error", {
   grDevices::pdf(NULL)
   on.exit(grDevices::dev.off())
   expect_no_error(plot(fit))
   expect_no_error(plot(fit, type = "convergence"))
-  expect_no_error(plot(ppc, type = "summary"))
-  expect_no_error(utils::capture.output(plot(ppc, type = "participant")))
-  expect_no_error(plot(ppc, type = "density", condition = "pos_0.55"))
   expect_error(plot(fit, type = "nope"), "Unknown plot type")
 })
