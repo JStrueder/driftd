@@ -54,8 +54,13 @@ condition cell, response (\code{"upper"}, \code{"lower"}) and statistic, and col
 \code{quantile} (the quantile level, \code{NA} for probabilities);
 \item \code{n_cell} (trials in the cell) and \code{n_response} (trials with this response);
 \item \code{observed}, \code{predicted}, and the prediction interval \code{lower} and
-\code{upper} (\code{NA} if \code{intervals = FALSE}).
+\code{upper} (\code{NA} if \code{intervals = FALSE}). Probabilities are between 0
+and 1; RT quantiles are in seconds (plots show milliseconds by default);
+\item \code{.row}, a row identifier that links each row to its simulated replicates
+(used by \code{aggregate()} and \code{plot()}; keep it when subsetting).
 }
+The result is a data frame and can be filtered, reordered and summarized with base R or
+dplyr, and \code{aggregate()}, \code{summary()} and \code{plot()} still work on subsets.
 Use \code{\link{aggregate.driftd_prediction}} for group-level (averaged) values,
 \code{\link{summary.driftd_prediction}} for a per-participant misfit summary, and
 \code{\link{plot.driftd_prediction}} for plots.

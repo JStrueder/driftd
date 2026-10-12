@@ -7,7 +7,7 @@ test_that("predict() returns one row per participant, cell, response and statist
   expect_s3_class(pred, "driftd_prediction")
   expect_equal(nrow(pred), 2 * 10 * 2 * 6)
   expect_equal(names(pred), c("ID", ".cell", "val", "prob", "response", "statistic", "quantile", "n_cell",
-                              "n_response", "observed", "predicted", "lower", "upper"))
+                              "n_response", "observed", "predicted", "lower", "upper", ".row"))
   # the two response probabilities of a cell add up to 1
   p <- pred[pred$statistic == "probability", ]
   expect_equal(as.vector(tapply(p$predicted, list(p$ID, p$.cell), sum)), rep(1, 20), tolerance = 1e-6)
@@ -80,6 +80,28 @@ test_that("aggregate() averages participant statistics (Vincentizing)", {
   g_val <- aggregate(pred, by = "val")
   expect_equal(nrow(g_val), 2 * 2 * 6)
   expect_error(aggregate(pred, by = "nope"), "must name condition columns")
+})
+
+test_that("aggregate() and plot() give the same results on subsets made with base R or dplyr", {
+  full <- aggregate(pred)
+  pos <- full[full$val == "pos", ]
+  rownames(pos) <- NULL
+  sort_rows <- function(g) {
+    g <- g[order(g$prob, g$response, g$statistic, g$quantile), ]
+    rownames(g) <- NULL
+    g
+  }
+  # base R subset, a reordered subset, and dplyr::filter all match the full table
+  expect_equal(sort_rows(aggregate(pred[pred$val == "pos", ])), sort_rows(pos))
+  shuffled <- pred[rev(which(pred$val == "pos")), ]
+  expect_equal(sort_rows(aggregate(shuffled)), sort_rows(pos))
+  expect_equal(sort_rows(aggregate(dplyr::filter(pred, val == "pos"))), sort_rows(pos))
+  expect_no_error(suppressMessages(ggplot2::ggplot_build(plot(pred[pred$ID == 1, ]))))
+  # without the .row column, intervals of averages cannot be computed
+  no_row <- pred[, names(pred) != ".row"]
+  expect_warning(g <- aggregate(no_row), ".row column is missing")
+  expect_true(all(is.na(g$lower)))
+  expect_error(aggregate.driftd_prediction(as.data.frame(unclass(pred))), "output of predict")
 })
 
 test_that("summary() lists participants from worst to best fit", {
