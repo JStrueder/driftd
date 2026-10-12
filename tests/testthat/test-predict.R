@@ -117,7 +117,7 @@ test_that("all plot types build for designs with two, one and no condition colum
   fit1 <- quiet_driftd(d, sub_id = "ID", response = "R", rt = "RT", vary_v = "val", compute_se = FALSE)
   fit0 <- quiet_driftd(d, sub_id = "ID", response = "R", rt = "RT", compute_se = FALSE)
   for (p in list(pred, predict(fit1, n_sim = 20, seed = 1), predict(fit0, n_sim = 20, seed = 1))) {
-    for (type in c("qp", "scatter", "cdf", "participants")) {
+    for (type in c("rt", "choice", "scatter", "participants", "qp")) {
       g <- plot(p, type = type)
       expect_s3_class(g, "ggplot")
       expect_no_error(suppressMessages(ggplot2::ggplot_build(g)))
@@ -125,15 +125,55 @@ test_that("all plot types build for designs with two, one and no condition colum
   }
 })
 
-test_that("plot options select, facet, color and filter as requested", {
+test_that("rt and choice plots assign condition columns to roles by default", {
+  roles <- driftd:::assign_roles(aggregate(pred), c("val", "prob"), need_x = TRUE)
+  expect_equal(roles, list(x = "prob", color = "val", panels = character(0)))
+  roles <- driftd:::assign_roles(aggregate(pred), c("val", "prob"))
+  expect_equal(roles, list(x = NULL, color = "val", panels = "prob"))
+  # user choices are respected, and every column in `by` gets a role
+  roles <- driftd:::assign_roles(aggregate(pred), c("val", "prob"), color = "prob")
+  expect_equal(roles, list(x = NULL, color = "prob", panels = "val"))
+  expect_error(driftd:::assign_roles(aggregate(pred), c("val", "prob"), color = "val", panels = "val"),
+               "different condition columns")
+
+  # the rt plot: one column of panels per response, one row per prob level, colors for val
+  b <- ggplot2::ggplot_build(plot(pred))
+  expect_equal(nrow(b$layout$layout), 5 * 2)
+  expect_equal(length(unique(b$data[[length(b$data)]]$colour)), 1)            # predictions in black
+  expect_equal(length(unique(b$data[[length(b$data) - 1]]$colour)), 2)        # observed: 2 colors
+})
+
+test_that("individual participants are shown, averaged over columns not in `by`", {
+  iv <- driftd:::individual_values(pred, by = "val", info = attr(pred, "driftd"))
+  # one value per participant, val level, response and statistic
+  expect_equal(nrow(iv), nrow(unique(iv[, c("ID", "val", "response", "statistic", "quantile")])))
+  src <- pred[pred$ID == 1 & pred$val == "pos" & pred$response == "upper" & pred$statistic == "probability", ]
+  expect_equal(iv$observed[iv$ID == 1 & iv$val == "pos" & iv$response == "upper" & iv$statistic == "probability"],
+               mean(src$observed))
+  n_layers <- function(g) length(g$layers)
+  expect_equal(n_layers(plot(pred, individuals = FALSE)), n_layers(plot(pred)) - 1)
+  expect_equal(n_layers(plot(pred, participant = 1)), n_layers(plot(pred, individuals = FALSE)))
+})
+
+test_that("plot options select, color, panels, labels and units work as requested", {
   build <- function(g) suppressMessages(ggplot2::ggplot_build(g))
-  expect_no_error(build(plot(pred, facet = "val")))
+  expect_no_error(build(plot(pred, type = "rt", by = "val")))
+  expect_no_error(build(plot(pred, type = "choice", x_var = "val", color = "prob")))
+  expect_no_error(build(plot(pred, type = "choice", response = "lower")))
+  expect_no_error(build(plot(pred, type = "qp", panels = "val")))
   expect_no_error(build(plot(pred, type = "scatter", level = "participant", color = "val")))
   expect_no_error(build(plot(pred, type = "scatter", intervals = FALSE)))
   expect_no_error(build(plot(pred, participant = 2)))
-  expect_no_error(build(plot(pred, type = "cdf", by = "prob", select = list(prob = c(0.4, 0.6)))))
-  expect_message(plot(pred, type = "cdf", max_cells = 4), "Showing the first 4 of 10 cells")
-  expect_error(plot(pred, facet = "nope"), "condition columns")
+  expect_no_error(build(plot(pred, select = list(prob = c(0.4, 0.6)))))
+
+  g <- plot(pred, rt_unit = "s", response_labels = c(upper = "pos choice", lower = "neg choice"))
+  expect_equal(g$labels$x, "RT (s)")
+  expect_equal(levels(g$data$response_label), c("pos choice", "neg choice"))
+  expect_equal(plot(pred)$labels$x, "RT (ms)")
+  expect_equal(plot(pred, type = "choice", response_labels = c(upper = "yes"))$labels$y, "P(yes)")
+
+  expect_error(plot(pred, color = "nope"), "condition columns")
+  expect_error(plot(pred, by = "val", panels = "prob"), "condition columns")
   expect_error(plot(pred, participant = 99), "No participant")
   expect_error(plot(pred, select = list(prob = 0.99)), "No data left")
 })

@@ -6,15 +6,19 @@
 \usage{
 \method{plot}{driftd_prediction}(
   x,
-  type = c("qp", "scatter", "cdf", "participants"),
+  type = c("rt", "choice", "scatter", "participants", "qp"),
   participant = NULL,
   by = NULL,
-  facet = NULL,
   color = NULL,
+  panels = NULL,
+  x_var = NULL,
+  response = c("upper", "lower"),
+  response_labels = NULL,
+  individuals = TRUE,
+  rt_unit = c("ms", "s"),
   select = NULL,
   level = c("group", "participant"),
   quantiles = c(0.1, 0.5, 0.9),
-  max_cells = 16,
   intervals = TRUE,
   ...
 )
@@ -24,32 +28,54 @@
 
 \item{type}{The plot type:
 \itemize{
-\item \code{"qp"} (default): quantile-probability plot (Ratcliff & McKoon, 2008). Each
-condition cell contributes its RT quantiles of upper responses at x = P(upper) and of
-lower responses at x = P(lower), so all cells and both responses appear in one panel.
-Observed values are points, predictions are crosses connected across cells for each
-quantile, and bars show prediction intervals.
+\item \code{"rt"} (default): RT quantiles. RT on the x-axis and quantile level on the
+y-axis, one column of panels per response. Large points are observed quantiles
+averaged over participants, crosses are model predictions, horizontal bars are
+prediction intervals, and small faint points are individual participants.
+\item \code{"choice"}: probability of one response (see \code{response}) across the
+levels of a condition column (\code{x}). Large points are observed probabilities
+averaged over participants, crosses and lines are predictions, vertical bars are
+prediction intervals, and small faint points are individual participants.
 \item \code{"scatter"}: observed against predicted values, one panel per statistic
 (P(upper) and the RT quantiles in \code{quantiles} for each response), with the
-identity line. Points outside their prediction interval are highlighted.
-\item \code{"cdf"}: defective cumulative distributions per cell: the RT quantiles of each
-response plotted against cumulative probability, scaled by the response probability,
-so both how often and how fast each response is given are shown.
+identity line. Points outside their prediction interval are highlighted. A compact
+overview of all cells, e.g. for supplementary material.
 \item \code{"participants"}: proportion of each participant's statistics outside their
 prediction intervals (see \code{\link{summary.driftd_prediction}}), to spot poorly
 fitted participants.
+\item \code{"qp"}: quantile-probability plot (Ratcliff & McKoon, 2008): RT quantiles of
+each response plotted against its response probability, all cells in one panel. Most
+readable for designs with a single condition column that orders difficulty.
 }}
 
 \item{participant}{Optional participant ID: plot only this participant's data and
 predictions instead of group averages.}
 
 \item{by}{Character vector of condition columns to keep when averaging over participants
-(see \code{\link{aggregate.driftd_prediction}}). Default: all condition columns.}
+(see \code{\link{aggregate.driftd_prediction}}). Default: all condition columns.
+Statistics are averaged over the condition columns not listed.}
 
-\item{facet}{Optional character vector of condition columns (a subset of \code{by}) to split
-the plot into panels (\code{"qp"} and \code{"scatter"}).}
+\item{color}{Condition column shown by color (\code{"rt"}, \code{"choice"}, and as point
+color in \code{"scatter"}). By default, \code{"rt"} and \code{"choice"} use the condition
+column with the fewest levels (for \code{"choice"}, among those not on the x-axis).}
 
-\item{color}{Optional condition column used to color points (\code{"scatter"}).}
+\item{panels}{Condition columns that split the plot into panels. By default, all condition
+columns in \code{by} not used for \code{x_var} or \code{color}. In \code{"rt"} plots, panels
+are arranged in rows, with one column per response.}
+
+\item{x_var}{For \code{"choice"}: the condition column on the x-axis. Default: the condition
+column with the most levels.}
+
+\item{response}{For \code{"choice"}: the response whose probability is shown,
+\code{"upper"} (default) or \code{"lower"}.}
+
+\item{response_labels}{Optional named character vector of labels for the responses, e.g.
+\code{c(upper = "correct", lower = "error")}.}
+
+\item{individuals}{Logical: show individual participants as faint points in \code{"rt"}
+and \code{"choice"} plots. Default TRUE.}
+
+\item{rt_unit}{Unit for RTs in \code{"rt"} plots: \code{"ms"} (default) or \code{"s"}.}
 
 \item{select}{Optional named list to restrict the plot to some conditions, e.g.
 \code{list(val = "pos", prob = c(0.4, 0.6))}.}
@@ -59,9 +85,6 @@ averaged over participants) or \code{"participant"} (one point per participant a
 
 \item{quantiles}{RT quantiles shown in \code{"scatter"}. Default: 0.1, 0.5 and 0.9 (those
 of them that were predicted).}
-
-\item{max_cells}{Maximum number of cells (panels) shown by \code{"cdf"}. Default 16; use
-\code{select} or \code{by} to choose which cells to show.}
 
 \item{intervals}{Logical: show prediction intervals (if they were computed). Default TRUE.}
 
@@ -73,12 +96,15 @@ A \code{ggplot} object.
 \description{
 Graphical checks of how well the fitted diffusion model describes the data, based on the
 output of \code{\link{predict.driftd_results}}. All plots work for any number of condition
-columns, levels and cells, and return \code{ggplot} objects that can be modified further.
+columns and levels, and return \code{ggplot} objects that can be modified further.
 }
 \details{
-Group-level plots show averages of participant-level statistics (Vincentizing); see
+Group-level values are averages of participant-level statistics (Vincentizing); see
 \code{\link{aggregate.driftd_prediction}}. RT quantiles of a response are only shown where
 participants had at least \code{min_n} such responses (see \code{\link{predict.driftd_results}}).
+
+Reporting response probabilities and RT quantiles in separate figures keeps each figure
+simple; \code{"choice"} and \code{"rt"} plots are designed to be used together.
 }
 \references{
 Ratcliff, R., & McKoon, G. (2008). The diffusion decision model: Theory and data for

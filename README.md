@@ -67,10 +67,10 @@ pred <- predict(results, seed = 1)
 aggregate(pred)        # group averages per condition cell
 summary(pred)          # misfit per participant, worst first
 
-plot(pred)                                   # quantile-probability plot
-plot(pred, facet = "val")                    # ... split by a condition column
-plot(pred, type = "scatter")                 # observed vs predicted, per statistic
-plot(pred, type = "cdf")                     # RT distributions per condition cell
+plot(pred)                                   # RT quantiles: panels by prob, colors by val
+plot(pred, type = "choice")                  # response probabilities
+plot(pred, response_labels = c(upper = "pos choice", lower = "neg choice"))
+plot(pred, type = "scatter")                 # observed vs predicted, all statistics
 plot(pred, type = "participants")            # participants with poor fit
 plot(pred, participant = 3)                  # a single participant
 
