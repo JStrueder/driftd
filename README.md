@@ -56,6 +56,7 @@ results <- driftd(
 
 # Examine results
 results$individual_estimates
+results$standard_errors   # asymptotic standard errors (see ?driftd)
 results$summary
 
 # Posterior predictive check (simulate 1 dataset)
