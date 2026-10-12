@@ -34,7 +34,7 @@ Development version from GitHub:
 devtools::install_github("JStrueder/driftd")
 ```
 
-## Quick Example: Fitting a DDM and Checking Model Fit
+## Quick Example: Fitting, Checking and Comparing Models
 
 This example demonstrates the typical workflow. Fitting can be slow, so the fitting step is shown with `eval = FALSE`. Use the included example dataset to follow along.
 
@@ -85,6 +85,13 @@ plot(pred, response_labels = c(upper = "pos choice", lower = "neg choice"))
 plot(pred, type = "scatter")                 # observed vs predicted, all statistics
 plot(pred, type = "participants")            # participants with poor fit
 plot(pred, participant = 3)                  # a single participant
+
+# Model comparison: e.g. does val also affect the starting point?
+results_v <- driftd(data = example_data, sub_id = "ID", response = "R", rt = "RT",
+                    vary_v = c("prob", "val"))
+cmp <- compare_models(drift_only = results_v, drift_and_bias = results)
+cmp                    # summed AIC/BIC, participants per best model, likelihood-ratio test
+plot(cmp)              # BIC differences per participant
 
 # Simulate replicate datasets from the fitted model
 sims <- simulate(results, nsim = 10, seed = 1)
