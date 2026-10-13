@@ -130,7 +130,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     settings <- x$settings
 
     # Set up 2x2 layout
-    par(mfrow = c(2, 2), mar = c(5, 4, 3, 2), oma = c(0, 0, 2, 0))
+    par(mfrow = c(2, 2), mar = c(5, 4, 3, 2), oma = c(0, 0, 2, 0), cex.axis = 0.8)
 
     # Get parameter columns (excluding ID, converge, LLE, AIC, BIC)
     param_cols <- names(param_data)[!names(param_data) %in% c("ID", "converge", "LLE", "AIC", "BIC")]
@@ -165,6 +165,9 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
                                     Value = values))
     }
 
+    # Conditions in the order of the parameter columns, which follows the condition levels
+    plot_data$Condition <- factor(plot_data$Condition, levels = unique(plot_data$Condition))
+
     # Calculate actual ranges to ensure we don't cut off data
     a_range <- range(plot_data$Value[plot_data$Parameter == "a"], na.rm = TRUE)
     t0_range <- range(plot_data$Value[plot_data$Parameter == "t0"], na.rm = TRUE)
@@ -191,7 +194,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     }
 
     # Panel 1: Parameter a
-    a_data <- plot_data[plot_data$Parameter == "a", ]
+    a_data <- droplevels(plot_data[plot_data$Parameter == "a", ])
     if (nrow(a_data) > 0) {
       # Check if a varies by conditions
       vary_a <- settings$varying_parameters$a
@@ -228,7 +231,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     }
 
     # Panel 2: Parameter t0
-    t0_data <- plot_data[plot_data$Parameter == "t0", ]
+    t0_data <- droplevels(plot_data[plot_data$Parameter == "t0", ])
     if (nrow(t0_data) > 0) {
       # Check if t0 varies by conditions
       vary_t0 <- settings$varying_parameters$t0
@@ -264,7 +267,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     }
 
     # Panel 3: Parameter z
-    z_data <- plot_data[plot_data$Parameter == "z", ]
+    z_data <- droplevels(plot_data[plot_data$Parameter == "z", ])
     if (nrow(z_data) > 0) {
       # Check if z varies by conditions
       vary_z <- settings$varying_parameters$z
@@ -301,7 +304,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     }
 
     # Panel 4: Parameter v
-    v_data <- plot_data[plot_data$Parameter == "v", ]
+    v_data <- droplevels(plot_data[plot_data$Parameter == "v", ])
     if (nrow(v_data) > 0) {
       # Check if v varies by conditions
       vary_v <- settings$varying_parameters$v
@@ -341,7 +344,7 @@ plot.driftd_results <- function(x, type = "parameters", boxplot_width = 0.8, ...
     title(main = "Diffusion Model Parameter Estimates", outer = TRUE)
 
     # Reset layout
-    par(mfrow = c(1, 1))
+    par(mfrow = c(1, 1), cex.axis = 1)
 
   } else if (type == "convergence") {
     # Existing convergence plot code

@@ -189,7 +189,10 @@ wrap_caption <- function(text, width = 90) paste(strwrap(text, width = width), c
 #' @noRd
 panel_labeller <- function(df, cols) {
   if (length(cols) == 0) return(rep("", nrow(df)))
-  do.call(paste, c(lapply(cols, function(col) paste(col, "=", df[[col]])), sep = " | "))
+  labels <- do.call(paste, c(lapply(cols, function(col) paste(col, "=", df[[col]])), sep = " | "))
+  # panels in the order of the condition levels (factor levels, or sorted values)
+  ord <- do.call(order, unname(lapply(cols, function(col) df[[col]])))
+  factor(labels, levels = unique(labels[ord]))
 }
 
 # Observed participant-level values, averaged within each participant over the condition
