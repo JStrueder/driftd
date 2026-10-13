@@ -18,8 +18,8 @@ i.e. one row per condition cell.}
 \value{
 A data frame with the \code{by} columns, \code{response}, \code{statistic},
 \code{quantile}, \code{n_participants} (number of participants contributing),
-\code{observed}, \code{predicted}, and the prediction interval \code{lower} and
-\code{upper} for the average.
+\code{observed}, \code{predicted} (averages over participants), and \code{lower} and
+\code{upper}, the prediction interval for individual participants (see Details).
 }
 \description{
 Averages participant-level observed and predicted statistics from
@@ -30,6 +30,17 @@ across the levels of condition columns not listed in \code{by}.
 Only participant-cells with an observed value contribute to each average, and observed
 and predicted values are averaged over the same participant-cells. RT quantiles are
 therefore averaged only over participants with at least \code{min_n} responses of that
-type (see \code{\link{predict.driftd_results}}). Prediction intervals for the averages are
-obtained by averaging each simulated replicate in the same way.
+type (see \code{\link{predict.driftd_results}}).
+
+The prediction interval shows where the statistics of \emph{individual participants} are
+expected to lie under the fitted model, not the uncertainty of the average. The simulated
+replicates of all participants in a cell (\code{n_sim} per participant, averaged over the
+condition columns not in \code{by} like the observed values) are pooled, and the interval
+is their central \code{level} range. It therefore reflects the differences between
+participants as well as trial-to-trial variability (and estimation uncertainty if
+\code{parameter_uncertainty = TRUE} in \code{predict()}), and about \code{level} of the
+individual participants' observed values should fall inside it. Because each participant is
+fitted separately, this interval mainly shows the expected spread; misfit of individual
+participants is better judged with their own intervals (\code{plot(..., participant = )},
+\code{\link{summary.driftd_prediction}}).
 }
