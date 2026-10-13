@@ -55,13 +55,11 @@ usually be inspected or excluded first.
 }
 \examples{
 \dontrun{
-fit <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
-              vary_z = "val", vary_v = c("prob", "val"))
+fit <- driftd(speed_acc, sub_id = "id", vary_a = "condition", vary_v = "stimulus",
+              fix_st0 = FALSE)
 est <- estimates(fit)                     # one row per participant and parameter
 cells <- estimates(fit, format = "cells") # one row per participant and condition
-cells$ID <- factor(cells$ID)
-cells$prob <- factor(cells$prob)
-summary(aov(v ~ prob * val + Error(ID / (prob * val)), data = cells))
+aggregate(cbind(a, v) ~ condition + stimulus, data = cells, FUN = mean)
 }
 
 }

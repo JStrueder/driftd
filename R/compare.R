@@ -60,11 +60,11 @@
 #'
 #' @examples
 #' \dontrun{
-#' fit_v  <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
-#'                  vary_v = c("prob", "val"))
-#' fit_vz <- driftd(example_data, sub_id = "ID", response = "R", rt = "RT",
-#'                  vary_z = "val", vary_v = c("prob", "val"))
-#' cmp <- compare_models(drift_only = fit_v, drift_and_bias = fit_vz)
+#' fit_a   <- driftd(speed_acc, sub_id = "id", vary_a = "condition", vary_v = "stimulus",
+#'                   fix_st0 = FALSE)
+#' fit_at0 <- driftd(speed_acc, sub_id = "id", vary_a = "condition", vary_t0 = "condition",
+#'                   vary_v = "stimulus", fix_st0 = FALSE)
+#' cmp <- compare_models(a = fit_a, a_t0 = fit_at0)
 #' cmp
 #' cmp$participants
 #' }
