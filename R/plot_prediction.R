@@ -11,15 +11,17 @@
 #'     \item \code{"rt"} (default): RT quantiles. RT on the x-axis and quantile level on the
 #'       y-axis, one column of panels per response. Large points are observed quantiles
 #'       averaged over participants, crosses are model predictions, horizontal bars are
-#'       prediction intervals, and small faint points are individual participants.
+#'       prediction intervals for individual participants, and small faint points are
+#'       individual participants.
 #'     \item \code{"choice"}: probability of one response (see \code{response}) across the
 #'       levels of a condition column (\code{x}). Large points are observed probabilities
 #'       averaged over participants, crosses and lines are predictions, vertical bars are
-#'       prediction intervals, and small faint points are individual participants.
+#'       prediction intervals for individual participants, and small faint points are
+#'       individual participants.
 #'     \item \code{"scatter"}: observed against predicted values, one panel per statistic
 #'       (P(upper) and the RT quantiles in \code{quantiles} for each response), with the
-#'       identity line. Points outside their prediction interval are highlighted. A compact
-#'       overview of all cells, e.g. for supplementary material.
+#'       identity line and prediction intervals. A compact overview of all cells, e.g. for
+#'       supplementary material.
 #'     \item \code{"participants"}: proportion of each participant's statistics outside their
 #'       prediction intervals (see \code{\link{summary.driftd_prediction}}), to spot poorly
 #'       fitted participants.
@@ -59,8 +61,10 @@
 #' @return A \code{ggplot} object.
 #'
 #' @details
-#' Group-level values are averages of participant-level statistics (Vincentizing); see
-#' \code{\link{aggregate.driftd_prediction}}. RT quantiles of a response are only shown where
+#' Group-level values are averages of participant-level statistics (Vincentizing). Prediction
+#' intervals in group-level plots are intervals for individual participants: about 95% (with
+#' the default \code{level}) of the participants' observed values should fall inside them.
+#' See \code{\link{aggregate.driftd_prediction}}. RT quantiles of a response are only shown where
 #' participants had at least \code{min_n} such responses (see \code{\link{predict.driftd_results}}).
 #'
 #' Reporting response probabilities and RT quantiles in separate figures keeps each figure
@@ -183,13 +187,23 @@ color_column <- function(df, color) {
 }
 
 # Wrap long captions so they fit the plot width
+# Caption text for the prediction intervals in group and single-participant plots
+#' @noRd
+interval_caption <- function(participant, level) {
+  paste0(" Bars: ", round(100 * level), "% prediction intervals",
+         if (is.null(participant)) " for individual participants." else ".")
+}
+
 #' @noRd
 wrap_caption <- function(text, width = 90) paste(strwrap(text, width = width), collapse = "\n")
 
 #' @noRd
 panel_labeller <- function(df, cols) {
   if (length(cols) == 0) return(rep("", nrow(df)))
-  do.call(paste, c(lapply(cols, function(col) paste(col, "=", df[[col]])), sep = " | "))
+  labels <- do.call(paste, c(lapply(cols, function(col) paste(col, "=", df[[col]])), sep = " | "))
+  # panels in the order of the condition levels (factor levels, or sorted values)
+  ord <- do.call(order, unname(lapply(cols, function(col) df[[col]])))
+  factor(labels, levels = unique(labels[ord]))
 }
 
 # Observed participant-level values, averaged within each participant over the condition
@@ -244,7 +258,7 @@ plot_rt <- function(x, g, info, by, color, panels, individuals, intervals, rt_un
                   title = paste0("RT quantiles (", title_suffix(participant), ")"),
                   caption = wrap_caption(paste0("Large points: observed", if (is.null(participant)) " (average over participants)",
                                    ". Crosses: model predictions.",
-                                   if (intervals) " Bars: prediction intervals." else "",
+                                   if (intervals) interval_caption(participant, info$level) else "",
                                    if (individuals) " Small points: individual participants." else ""))) +
     ggplot2::theme_bw() +
     ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
@@ -297,7 +311,7 @@ plot_choice <- function(x, g, info, by, x_var, color, panels, response, individu
                   title = paste0("Response probabilities (", title_suffix(participant), ")"),
                   caption = wrap_caption(paste0("Large points: observed", if (is.null(participant)) " (average over participants)",
                                    ". Crosses and dashed lines: model predictions.",
-                                   if (intervals) " Bars: prediction intervals." else "",
+                                   if (intervals) interval_caption(participant, info$level) else "",
                                    if (individuals) " Small points: individual participants." else ""))) +
     ggplot2::theme_bw() +
     ggplot2::theme(panel.grid.minor = ggplot2::element_blank())
@@ -347,10 +361,6 @@ plot_scatter <- function(df, info, panels, color, quantiles, intervals, level, p
                      paste0(df$response, ": RT quantile ", format(df$quantile)))
   df$panel <- factor(df$panel, levels = c("P(upper)", paste0(rep(c("upper", "lower"), each = length(quantiles)),
                                                               ": RT quantile ", format(rep(quantiles, 2)))))
-  if (intervals) {
-    df$fit <- ifelse(is.na(df$lower), "no interval",
-                     ifelse(df$observed < df$lower | df$observed > df$upper, "outside interval", "inside interval"))
-  }
 
   # invisible points on the diagonal so that every panel has equal x and y ranges
   rng <- do.call(rbind, lapply(split(df, df$panel, drop = TRUE), function(s) {
@@ -367,17 +377,7 @@ plot_scatter <- function(df, info, panels, color, quantiles, intervals, level, p
   }
   if (!is.null(color)) {
     df[[color]] <- factor(df[[color]])
-    if (intervals) {
-      p <- p + ggplot2::geom_point(data = df, ggplot2::aes(colour = .data[[color]], shape = .data$fit), size = 2) +
-        ggplot2::scale_shape_manual(values = c("inside interval" = 16, "outside interval" = 4, "no interval" = 1),
-                                    name = NULL)
-    } else {
-      p <- p + ggplot2::geom_point(data = df, ggplot2::aes(colour = .data[[color]]), size = 2)
-    }
-  } else if (intervals) {
-    p <- p + ggplot2::geom_point(ggplot2::aes(colour = .data$fit), size = 2) +
-      ggplot2::scale_colour_manual(values = c("inside interval" = "grey30", "outside interval" = "#D55E00",
-                                              "no interval" = "grey70"), name = NULL)
+    p <- p + ggplot2::geom_point(data = df, ggplot2::aes(colour = .data[[color]]), size = 2)
   } else {
     p <- p + ggplot2::geom_point(colour = "grey30", size = 2)
   }
@@ -388,7 +388,8 @@ plot_scatter <- function(df, info, panels, color, quantiles, intervals, level, p
   p + wrap +
     ggplot2::labs(x = "Predicted", y = "Observed", title = paste0("Observed vs predicted (", what, ")"),
                   caption = paste0("Dashed line: observed = predicted.",
-                                   if (intervals) " Bars: prediction intervals." else "")) +
+                                   if (intervals) interval_caption(if (level == "group") participant else "", info$level)
+                                   else "")) +
     ggplot2::theme_bw()
 }
 

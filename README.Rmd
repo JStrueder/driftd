@@ -18,7 +18,7 @@ knitr::opts_chunk$set(
 <!-- badges: start -->
 <!-- badges: end -->
 
-driftd provides a streamlined workflow for fitting Drift‑Diffusion Models (DDMs) to trial‑level RT and binary response data, performing participant‑level maximum‑likelihood fits (via `nlminb`/`rtdists`) with standard errors, and checks of model fit that compare observed and predicted response probabilities and RT quantiles.
+driftd is a wrapper around the [rtdists](https://CRAN.R-project.org/package=rtdists) package (Singmann, Brown, Gretton, & Heathcote) that makes it easier to fit the diffusion decision model to response time data and to analyze the results. You specify which parameters vary across which conditions; driftd builds the likelihood, fits it to each participant by maximum likelihood, and provides standard errors, analysis-ready parameter tables, model fit checks, model comparison, parameter and model recovery, and simulation. All diffusion model computations are done by rtdists.
 
 ## Installation
 
@@ -34,83 +34,59 @@ Development version from GitHub:
 devtools::install_github("JStrueder/driftd")
 ```
 
-## Quick Example: Fitting, Checking, Comparing and Validating Models
+To also install the vignette, a complete worked analysis from the data to reporting:
 
-This example demonstrates the typical workflow. Fitting can be slow, so the fitting step is shown with `eval = FALSE`. Use the included example dataset to follow along.
+```r
+devtools::install_github("JStrueder/driftd", build_vignettes = TRUE)
+vignette("driftd", package = "driftd")
+```
+
+## Quick example
+
+The example data, `speed_acc`, are from a lexical decision experiment with speed and accuracy instructions (Wagenmakers et al., 2008), as distributed with rtdists. Fitting all 17 participants takes about 15 minutes per model, so the code is not run here; the vignette shows the output.
 
 ```{r example, eval = FALSE}
 library(driftd)
+data(speed_acc)
 
-# load example data included with the package
-data(example_data)
+# boundary separation by instruction, drift rate by stimulus type
+fit <- driftd(speed_acc, sub_id = "id", response = "response", rt = "rt",
+              vary_a = "condition", vary_v = "stimulus", fix_st0 = FALSE)
+fit$summary
+estimates(fit)                     # one row per participant and parameter, with SEs
+estimates(fit, format = "cells")   # one row per participant and condition
 
-# Quick inspect
-head(example_data)
+# model fit
+pred <- predict(fit, seed = 1)
+plot(pred)                         # RT quantiles
+plot(pred, type = "choice")        # response probabilities
+summary(pred)                      # participants with the most misfit
 
-# Fit the model (this may take time; run interactively)
-results <- driftd(
-  data = example_data,
-  sub_id = "ID",
-  response = "R",
-  rt = "RT",
-  vary_z = c("val"),
-  vary_v = c("prob", "val"),
-  fix_st0 = TRUE,
-  fix_sz = TRUE,
-  fix_sv = TRUE,
-  print_starting_vals = FALSE
-)
+# model comparison: does the instruction also affect the drift rate?
+fit_v <- driftd(speed_acc, sub_id = "id", response = "response", rt = "rt",
+                vary_a = "condition", vary_v = c("stimulus", "condition"), fix_st0 = FALSE)
+cmp <- compare_models(a = fit, a_v = fit_v)
+plot(cmp)
 
-# Examine results
-results$summary                              # mean and SD of each parameter
-est <- estimates(results)                    # one row per participant and parameter, with SEs
-cells <- estimates(results, format = "cells")  # one row per participant and condition cell
+# parameter and model recovery
+plot(recover_parameters(fit, seed = 1))
+plot(recover_models(a = fit, a_v = fit_v, seed = 1))
 
-# e.g. a repeated-measures ANOVA on the drift rates
-cells$ID <- factor(cells$ID)
-cells$prob <- factor(cells$prob)
-summary(aov(v ~ prob * val + Error(ID / (prob * val)), data = cells))
-
-# Model fit: observed vs predicted response probabilities and RT quantiles,
-# with prediction intervals from 200 simulated datasets
-pred <- predict(results, seed = 1)
-
-pred                   # one row per participant, condition, response and statistic
-aggregate(pred)        # group averages per condition cell
-summary(pred)          # misfit per participant, worst first
-
-plot(pred)                                   # RT quantiles: panels by prob, colors by val
-plot(pred, type = "choice")                  # response probabilities
-plot(pred, response_labels = c(upper = "pos choice", lower = "neg choice"))
-plot(pred, type = "scatter")                 # observed vs predicted, all statistics
-plot(pred, type = "participants")            # participants with poor fit
-plot(pred, participant = 3)                  # a single participant
-
-# Model comparison: e.g. does val also affect the starting point?
-results_v <- driftd(data = example_data, sub_id = "ID", response = "R", rt = "RT",
-                    vary_v = c("prob", "val"))
-cmp <- compare_models(drift_only = results_v, drift_and_bias = results)
-cmp                    # summed AIC/BIC, participants per best model, likelihood-ratio test
-plot(cmp)              # BIC differences per participant
-
-# Parameter recovery: can the parameters be recovered with this design and trial count?
-rec <- recover_parameters(results, seed = 1)
-rec                    # correlation, bias and RMSE of true vs recovered values
-plot(rec)
-
-# Model recovery: can the compared models be told apart? (slow: fits every model to data
-# simulated from every model)
-mrec <- recover_models(drift_only = results_v, drift_and_bias = results, seed = 1)
-mrec                   # confusion matrix: generating vs selected model
-plot(mrec)
-
-# Simulate replicate datasets from the fitted model
-sims <- simulate(results, nsim = 10, seed = 1)
+# simulate data from the fitted model
+sims <- simulate(fit, nsim = 10, seed = 1)
 ```
+
+## Credits
+
+driftd is built on [rtdists](https://CRAN.R-project.org/package=rtdists) (Singmann, Brown, Gretton, & Heathcote), which computes all diffusion model densities, distribution functions and random numbers, based on the fast-dm code of Andreas and Jochen Voss. If you use driftd, please cite rtdists as well; `citation("driftd")` gives both references.
+
+The `speed_acc` example data were collected by Wagenmakers, Ratcliff, Gomez, and McKoon (2008, Experiment 1) and are taken from the rtdists package.
+
+Wagenmakers, E.-J., Ratcliff, R., Gomez, P., & McKoon, G. (2008). A diffusion model account of criterion shifts in the lexical decision task. *Journal of Memory and Language, 58*(1), 140-159. https://doi.org/10.1016/j.jml.2007.04.006
 
 ## License and citation
 
-This package is licensed under the MIT license (see `LICENSE`). Please cite the package when used in research:
+driftd is licensed under the GNU General Public License, version 3 or later (see `LICENSE.md`). Please cite the package, and rtdists, when used in research:
 
 ```r
 citation("driftd")

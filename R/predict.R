@@ -178,15 +178,26 @@ predict.driftd_results <- function(object, probs = c(0.1, 0.3, 0.5, 0.7, 0.9), i
 #'
 #' @return A data frame with the \code{by} columns, \code{response}, \code{statistic},
 #'   \code{quantile}, \code{n_participants} (number of participants contributing),
-#'   \code{observed}, \code{predicted}, and the prediction interval \code{lower} and
-#'   \code{upper} for the average.
+#'   \code{observed}, \code{predicted} (averages over participants), and \code{lower} and
+#'   \code{upper}, the prediction interval for individual participants (see Details).
 #'
 #' @details
 #' Only participant-cells with an observed value contribute to each average, and observed
 #' and predicted values are averaged over the same participant-cells. RT quantiles are
 #' therefore averaged only over participants with at least \code{min_n} responses of that
-#' type (see \code{\link{predict.driftd_results}}). Prediction intervals for the averages are
-#' obtained by averaging each simulated replicate in the same way.
+#' type (see \code{\link{predict.driftd_results}}).
+#'
+#' The prediction interval shows where the statistics of \emph{individual participants} are
+#' expected to lie under the fitted model, not the uncertainty of the average. The simulated
+#' replicates of all participants in a cell (\code{n_sim} per participant, averaged over the
+#' condition columns not in \code{by} like the observed values) are pooled, and the interval
+#' is their central \code{level} range. It therefore reflects the differences between
+#' participants as well as trial-to-trial variability (and estimation uncertainty if
+#' \code{parameter_uncertainty = TRUE} in \code{predict()}), and about \code{level} of the
+#' individual participants' observed values should fall inside it. Because each participant is
+#' fitted separately, this interval mainly shows the expected spread; misfit of individual
+#' participants is better judged with their own intervals (\code{plot(..., participant = )},
+#' \code{\link{summary.driftd_prediction}}).
 #'
 #' @importFrom stats aggregate
 #' @export
@@ -214,11 +225,24 @@ aggregate.driftd_prediction <- function(x, by = NULL, ...) {
 
   reps <- replicates_for(x, use)
   if (!is.null(reps)) {
-    sums <- rowsum(reps, group, na.rm = TRUE, reorder = FALSE)
-    counts <- rowsum((!is.na(reps)) * 1, group, reorder = FALSE)
-    means <- sums / counts
-    means[counts == 0] <- NA
-    bounds <- interval_bounds(means, info$level)
+    # Prediction intervals for individual participants: each participant's simulated
+    # replicates (averaged over the condition columns not in `by`, like the observed values)
+    # are pooled over participants, and the interval is the central `level` range of the
+    # pooled values. It shows where individual participants' statistics are expected to lie.
+    pgroup <- paste(x_use[[info$sub_id]], group, sep = "\r")
+    pgroup <- factor(pgroup, levels = unique(pgroup))
+    sums <- rowsum(reps, pgroup, na.rm = TRUE, reorder = FALSE)
+    counts <- rowsum((!is.na(reps)) * 1, pgroup, reorder = FALSE)
+    pmeans <- sums / counts
+    pmeans[counts == 0] <- NA
+    pmeans_group <- group[match(levels(pgroup), as.character(pgroup))]
+    bounds <- t(vapply(split(seq_len(nrow(pmeans)), pmeans_group), function(rows) {
+      v <- pmeans[rows, , drop = FALSE]
+      ok <- !is.na(v)
+      if (sum(ok) < length(v) / 2) return(c(NA_real_, NA_real_))
+      alpha <- (1 - info$level) / 2
+      stats::quantile(v[ok], c(alpha, 1 - alpha), names = FALSE)
+    }, numeric(2)))
     res$lower <- bounds[, 1]
     res$upper <- bounds[, 2]
   } else {

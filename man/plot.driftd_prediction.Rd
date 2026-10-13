@@ -31,15 +31,17 @@
 \item \code{"rt"} (default): RT quantiles. RT on the x-axis and quantile level on the
 y-axis, one column of panels per response. Large points are observed quantiles
 averaged over participants, crosses are model predictions, horizontal bars are
-prediction intervals, and small faint points are individual participants.
+prediction intervals for individual participants, and small faint points are
+individual participants.
 \item \code{"choice"}: probability of one response (see \code{response}) across the
 levels of a condition column (\code{x}). Large points are observed probabilities
 averaged over participants, crosses and lines are predictions, vertical bars are
-prediction intervals, and small faint points are individual participants.
+prediction intervals for individual participants, and small faint points are
+individual participants.
 \item \code{"scatter"}: observed against predicted values, one panel per statistic
 (P(upper) and the RT quantiles in \code{quantiles} for each response), with the
-identity line. Points outside their prediction interval are highlighted. A compact
-overview of all cells, e.g. for supplementary material.
+identity line and prediction intervals. A compact overview of all cells, e.g. for
+supplementary material.
 \item \code{"participants"}: proportion of each participant's statistics outside their
 prediction intervals (see \code{\link{summary.driftd_prediction}}), to spot poorly
 fitted participants.
@@ -99,8 +101,10 @@ output of \code{\link{predict.driftd_results}}. All plots work for any number of
 columns and levels, and return \code{ggplot} objects that can be modified further.
 }
 \details{
-Group-level values are averages of participant-level statistics (Vincentizing); see
-\code{\link{aggregate.driftd_prediction}}. RT quantiles of a response are only shown where
+Group-level values are averages of participant-level statistics (Vincentizing). Prediction
+intervals in group-level plots are intervals for individual participants: about 95\% (with
+the default \code{level}) of the participants' observed values should fall inside them.
+See \code{\link{aggregate.driftd_prediction}}. RT quantiles of a response are only shown where
 participants had at least \code{min_n} such responses (see \code{\link{predict.driftd_results}}).
 
 Reporting response probabilities and RT quantiles in separate figures keeps each figure

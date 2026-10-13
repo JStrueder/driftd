@@ -1,0 +1,27 @@
+bibentry(
+  bibtype = "Manual",
+  title = "driftd: Easy Diffusion Model Fitting and Model Checks via 'rtdists'",
+  author = person("Jeremy D.", "Strueder"),
+  year = "2025",
+  note = paste("R package version", meta$Version),
+  url = "https://github.com/JStrueder/driftd",
+  textVersion = paste0(
+    "Strueder, J. D. (2025). driftd: Easy diffusion model fitting and model checks via ",
+    "'rtdists'. R package version ", meta$Version, ". https://github.com/JStrueder/driftd"
+  )
+)
+
+bibentry(
+  bibtype = "Manual",
+  header = "driftd computes all diffusion model densities with rtdists. Please also cite:",
+  title = "rtdists: Response Time Distributions",
+  author = c(person("Henrik", "Singmann"), person("Scott", "Brown"),
+             person("Matthew", "Gretton"), person("Andrew", "Heathcote")),
+  year = "2022",
+  note = "R package",
+  url = "https://CRAN.R-project.org/package=rtdists",
+  textVersion = paste0(
+    "Singmann, H., Brown, S., Gretton, M., & Heathcote, A. (2022). rtdists: Response ",
+    "time distributions. R package. https://CRAN.R-project.org/package=rtdists"
+  )
+)

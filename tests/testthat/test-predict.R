@@ -82,6 +82,23 @@ test_that("aggregate() averages participant statistics (Vincentizing)", {
   expect_error(aggregate(pred, by = "nope"), "must name condition columns")
 })
 
+test_that("aggregate() intervals are prediction intervals for individual participants", {
+  g <- aggregate(pred)
+  row <- g[g$val == "pos" & g$prob == 0.6 & g$response == "upper" & g$statistic == "quantile" & g$quantile == 0.5, ]
+  src <- pred[pred$val == "pos" & pred$prob == 0.6 & pred$response == "upper" & pred$statistic == "quantile" &
+                pred$quantile == 0.5 & !is.na(pred$observed), ]
+  # the replicates of all participants in the cell are pooled
+  pooled <- attr(pred, "replicates")[as.character(src$.row), ]
+  expect_equal(c(row$lower, row$upper), stats::quantile(pooled, c(0.025, 0.975), names = FALSE, na.rm = TRUE))
+  # averaged over a condition column, each participant's replicates are averaged first
+  g_val <- aggregate(pred, by = "val")
+  row <- g_val[g_val$val == "pos" & g_val$response == "upper" & g_val$statistic == "probability", ]
+  src <- pred[pred$val == "pos" & pred$response == "upper" & pred$statistic == "probability", ]
+  reps <- attr(pred, "replicates")[as.character(src$.row), ]
+  per_participant <- rowsum(reps, src$ID) / as.vector(table(src$ID))
+  expect_equal(c(row$lower, row$upper), stats::quantile(per_participant, c(0.025, 0.975), names = FALSE))
+})
+
 test_that("aggregate() and plot() give the same results on subsets made with base R or dplyr", {
   full <- aggregate(pred)
   pos <- full[full$val == "pos", ]

@@ -1,0 +1,203 @@
+---
+title: "Diffusion model analysis with driftd"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{Diffusion model analysis with driftd}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<!--
+This vignette is precomputed because the analysis takes about an hour to run.
+Edit driftd.Rmd.orig (not driftd.Rmd) and rebuild driftd.Rmd from the vignettes directory with
+
+  knitr::knit("driftd.Rmd.orig", output = "driftd.Rmd")
+-->
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>", fig.path = "figures/driftd-", dpi = 96,
+  fig.width = 7, fig.height = 4.5, out.width = "100%", cache.path = "cache/"
+)
+options(width = 100)
+```
+
+driftd fits the diffusion decision model to each participant by maximum likelihood. All
+diffusion model computations are done by the
+[rtdists](https://CRAN.R-project.org/package=rtdists) package (Singmann et al.); driftd builds
+the likelihood from a model specification and provides tools for checking and analyzing the
+fits.
+
+```{r load}
+library(driftd)
+```
+
+# Data
+
+`speed_acc`: 17 participants in a lexical decision task (word or nonword?) with speed or
+accuracy instructions (Wagenmakers et al., 2008, Experiment 1, as distributed with rtdists).
+
+```{r data}
+data(speed_acc)
+head(speed_acc)
+with(speed_acc, round(tapply(response, list(stimulus, condition), mean), 2))  # P("word")
+```
+
+driftd needs one row per trial with a participant ID, the response (0/1 or "lower"/"upper"),
+the RT in seconds, and the condition columns. Here, "word" responses (1) are the upper boundary.
+
+# Fitting
+
+Two models. In both, the instruction affects boundary separation (`a`), and the drift rate
+(`v`) depends on the stimulus. The second model also lets the instruction affect the
+non-decision time (`t0`). The across-trial variability of `t0` (`st0`) is estimated; `sz` and
+`sv` are fixed at 0 (the default).
+
+```{r fit, cache = TRUE, results = "hide", message = FALSE}
+fit_a <- driftd(speed_acc, sub_id = "id", response = "response", rt = "rt",
+                vary_a = "condition", vary_v = "stimulus", fix_st0 = FALSE)
+fit_at0 <- driftd(speed_acc, sub_id = "id", response = "response", rt = "rt",
+                  vary_a = "condition", vary_t0 = "condition", vary_v = "stimulus",
+                  fix_st0 = FALSE)
+```
+
+Convergence (0 = converged) and the parameters across participants:
+
+```{r convergence}
+table(fit_at0$fit_info$converge)
+fit_at0$summary
+```
+
+```{r parameters, fig.height = 6}
+plot(fit_at0)
+```
+
+# Estimates
+
+`estimates()` returns one row per participant and parameter, with standard errors:
+
+```{r estimates}
+head(estimates(fit_at0))
+```
+
+`format = "cells"` returns one row per participant and condition, for second-stage analyses:
+
+```{r cells}
+cells <- estimates(fit_at0, format = "cells")
+head(cells)
+```
+
+For example, the effect of the instruction on boundary separation and non-decision time:
+
+```{r second-stage}
+by_condition <- unique(cells[, c("id", "condition", "a", "t0")])
+with(by_condition, t.test(a[condition == "accuracy"], a[condition == "speed"], paired = TRUE))
+with(by_condition, t.test(t0[condition == "accuracy"], t0[condition == "speed"], paired = TRUE))
+```
+
+# Model fit
+
+`predict()` computes observed and predicted response probabilities and RT quantiles, with
+prediction intervals from simulated data:
+
+```{r predict, cache = TRUE}
+pred <- predict(fit_at0, seed = 1)
+```
+
+Large points are averages over participants, crosses are predictions, and small points are
+individual participants. Bars show where 95% of individual participants' values are expected
+to lie under the model.
+
+```{r fit-choice}
+plot(pred, type = "choice", response_labels = c(upper = "word", lower = "nonword"))
+```
+
+```{r fit-rt, fig.height = 9}
+plot(pred, response_labels = c(upper = "word", lower = "nonword"))
+```
+
+```{r fit-scatter, fig.width = 9, fig.height = 6}
+plot(pred, type = "scatter")
+```
+
+Participants with the most statistics outside their prediction intervals:
+
+```{r fit-participants}
+head(summary(pred))
+```
+
+# Model comparison
+
+```{r compare}
+cmp <- compare_models(a = fit_a, a_t0 = fit_at0)
+cmp
+```
+
+```{r compare-plot, fig.height = 5}
+plot(cmp)
+```
+
+# Parameter recovery
+
+Simulates data from each participant's estimates, refits the model, and compares recovered
+with true values:
+
+```{r param-recovery, cache = TRUE, message = FALSE}
+rec <- recover_parameters(fit_at0, seed = 1)
+```
+
+```{r param-recovery-show}
+rec
+```
+
+```{r param-recovery-plot, fig.height = 6}
+plot(rec)
+```
+
+# Model recovery
+
+Simulates data from each model, fits both models to each dataset, and records which model is
+selected:
+
+```{r model-recovery, cache = TRUE, message = FALSE}
+mrec <- recover_models(a = fit_a, a_t0 = fit_at0, seed = 1)
+```
+
+```{r model-recovery-show}
+mrec
+```
+
+```{r model-recovery-plot, fig.width = 6, fig.height = 4}
+plot(mrec)
+```
+
+# Simulation
+
+`simulate()` draws new data from the fitted model, with the observed number of trials:
+
+```{r simulate}
+sims <- simulate(fit_at0, nsim = 2, seed = 1)
+head(sims)
+```
+
+# Citation
+
+Please cite driftd and rtdists:
+
+```{r citation}
+citation("driftd")
+```
+
+# References
+
+Ratcliff, R., & McKoon, G. (2008). The diffusion decision model: Theory and data for two-choice
+decision tasks. *Neural Computation, 20*, 873-922. https://doi.org/10.1162/neco.2008.12-06-420
+
+Singmann, H., Brown, S., Gretton, M., & Heathcote, A. (2022). *rtdists: Response time
+distributions*. R package. https://CRAN.R-project.org/package=rtdists
+
+Wagenmakers, E.-J., Ratcliff, R., Gomez, P., & McKoon, G. (2008). A diffusion model account of
+the criterion shifts in the lexical decision task. *Journal of Memory and Language, 58*,
+140-159. https://doi.org/10.1016/j.jml.2007.04.006

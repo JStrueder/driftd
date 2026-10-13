@@ -503,7 +503,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   ll_fun <- function(pars, RT, response,
                      a_start_val, t0_start_val, z_start_val, v_start_val, st0_start_val, sz_start_val, sv_start_val,
                      precision, stop_on_error,
-                     param_names, contains_conditions_list, list_with_split_pars) {
+                     param_names, contains_conditions_list, list_with_split_pars,
+                     groups = NULL) {
 
     # Initialize base parameter vectors
     a   <- a_start_val
@@ -537,13 +538,22 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       }
     }
 
-    # Compute likelihoods
-    dens <- ddiffusion(
-      rt = RT, response = response,
-      a = a, v = v, t0 = t0, z = z * a,
-      st0 = st0, sz = sz, sv = sv,
-      precision = precision, stop_on_error = stop_on_error
-    )
+    # Compute likelihoods. Trials in the same group share all parameter values, so
+    # ddiffusion is called once per group with scalar parameters. Passing trial-level
+    # parameter vectors instead gives the same densities, but rtdists then has to find
+    # the unique parameter combinations on every call, which dominates the fitting time.
+    if (is.null(groups)) groups <- list(seq_along(RT))
+    dens <- numeric(length(RT))
+    for (g in groups) {
+      k <- g[1]
+      at <- function(x) if (length(x) == 1) x else x[k]
+      dens[g] <- ddiffusion(
+        rt = RT[g], response = response[g],
+        a = at(a), v = at(v), t0 = at(t0), z = at(z) * at(a),
+        st0 = at(st0), sz = at(sz), sv = at(sv),
+        precision = precision, stop_on_error = stop_on_error
+      )
+    }
 
     # Handle invalid densities. A density of 0 usually means the true density is too
     # small to represent (e.g. an RT just above t0), so it is replaced by the smallest
@@ -733,6 +743,12 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       cat("======================================\n\n")
     }
 
+    # Trials that share all parameter values (same condition cell and the same tracking
+    # pattern), so the likelihood can be computed once per group
+    trial_groups <- unname(split(seq_len(nrow(data.to.model)), interaction(
+      data.to.model$cond, do.call(paste0, lapply(contains_conditions_list, as.integer)),
+      drop = TRUE)))
+
     # fit the model from a given starting vector
     run_fit <- function(start_vals) {
       nlminb(start_vals, objective = ll_fun,
@@ -740,6 +756,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
              a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
              precision = precision, stop_on_error = stop_on_error,
              param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
+             groups = trial_groups,
              control = list(iter.max = 10000, eval.max = 10000),
              lower = lower_bounds,
              upper = upper_i)
@@ -859,7 +876,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
           ll_fun(p, RT = data.to.model[["RT"]], response = data.to.model[["response"]],
                  a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
                  precision = max(precision, 4), stop_on_error = stop_on_error,
-                 param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars)
+                 param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
+                 groups = trial_groups)
         }
         H <- tryCatch(numDeriv::hessian(nll_free, fit$par[free]), error = function(e) NULL)
         if (is.null(H) || any(!is.finite(H))) {
