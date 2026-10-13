@@ -5,3 +5,4 @@
 ^vignettes/.*\.Rmd\.orig$
 ^vignettes/cache$
 ^data-raw$
+^\.github$

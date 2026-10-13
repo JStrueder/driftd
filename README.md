@@ -4,6 +4,8 @@
 # driftd
 
 <!-- badges: start -->
+[![R-CMD-check](https://github.com/JStrueder/driftd/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/JStrueder/driftd/actions/workflows/R-CMD-check.yaml)
+[![test-coverage](https://github.com/JStrueder/driftd/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/JStrueder/driftd/actions/workflows/test-coverage.yaml)
 <!-- badges: end -->
 
 driftd is a wrapper around the

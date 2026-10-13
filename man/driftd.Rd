@@ -85,7 +85,7 @@ driftd(
 
 \item{st0_fixed}{Numeric: Fixed value for \code{st0} if \code{fix_st0=TRUE}. Default is 0.}
 
-\item{sz_fixed}{Numeric: Fixed value for \code{sz} if \code{fix_sz=TRUE}. Default is 0.}
+\item{sz_fixed}{Numeric: Fixed value for \code{sz} if \code{fix_sz=TRUE}. Default is 0. As in 'rtdists', \code{sz} is the range of starting points on the scale of \code{a} (not relative to \code{a} like \code{z}), so it must be smaller than \code{2 * min(z, 1 - z) * a}.}
 
 \item{sv_fixed}{Numeric: Fixed value for \code{sv} if \code{fix_sv=TRUE}. Default is 0.}
 
