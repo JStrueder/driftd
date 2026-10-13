@@ -4,3 +4,4 @@
 ^README\.Rmd$
 ^vignettes/.*\.Rmd\.orig$
 ^vignettes/cache$
+^data-raw$
