@@ -25,19 +25,19 @@
 #' @param z_fixed Numeric: Fixed value for \code{z} (relative to \code{a}) if \code{fix_z=TRUE}. Default is 0.5.
 #' @param v_fixed Numeric: Fixed value for \code{v} if \code{fix_v=TRUE}. Default is 0.5.
 #' @param st0_fixed Numeric: Fixed value for \code{st0} if \code{fix_st0=TRUE}. Default is 0.
-#' @param sz_fixed Numeric: Fixed value for \code{sz} if \code{fix_sz=TRUE}. Default is 0.
+#' @param sz_fixed Numeric: Fixed value for \code{sz} if \code{fix_sz=TRUE}. Default is 0. As in 'rtdists', \code{sz} is the range of starting points on the scale of \code{a} (not relative to \code{a} like \code{z}), so it must be smaller than \code{2 * min(z, 1 - z) * a}.
 #' @param sv_fixed Numeric: Fixed value for \code{sv} if \code{fix_sv=TRUE}. Default is 0.
 #' @param precision Numeric: Precision parameter for \code{rtdists::ddiffusion}. Default is 3.
 #' @param stop_on_error Logical: Passed to \code{rtdists::ddiffusion}. Default is FALSE.
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
 #' @param compute_se Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).
 #' @param ask Logical: if TRUE (default) and R is running interactively, ask for confirmation before fitting when the pre-fit checks issue warnings (e.g. few trials per condition). Set to FALSE to always continue.
-#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is exactly 0. Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
+#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is at 0 (below 0.001, the same tolerance used for parameters at a bound when computing standard errors). Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
 #' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
 #'
-#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is exactly 0 (where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
+#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is at 0 (below 0.001; where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
 #' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
 #'
@@ -175,12 +175,20 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   # Validate parameter bounds
   if (a_fixed <= 0) stop("a_fixed must be positive")
   if (t0_fixed < 0) stop("t0_fixed cannot be negative")
-  if (z_fixed < 0 || z_fixed > 1) stop("z_fixed must be between 0 and 1")
+  # z = 0 or 1 puts the starting point on a boundary, where every trial has likelihood 0
+  if (z_fixed <= 0 || z_fixed >= 1) stop("z_fixed must be strictly between 0 and 1")
   if (st0_fixed < 0) stop("st0_fixed cannot be negative")
   if (sz_fixed < 0 || sz_fixed > 1) stop("sz_fixed must be between 0 and 1")
   if (sv_fixed < 0) stop("sv_fixed cannot be negative")
+  # sz is the range of starting points on the scale of a (as in rtdists), so all starting
+  # points lie between the boundaries only if sz < 2 * min(z, 1 - z) * a. Otherwise every
+  # trial has likelihood 0. This can be checked in advance when a, z and sz are all fixed.
+  if (fix_sz && fix_a && fix_z && sz_fixed >= 2 * min(z_fixed, 1 - z_fixed) * a_fixed) {
+    stop("sz_fixed (", sz_fixed, ") must be smaller than 2 * min(z_fixed, 1 - z_fixed) * a_fixed (",
+         2 * min(z_fixed, 1 - z_fixed) * a_fixed, "), or starting points fall outside the boundaries")
+  }
 
-  run_pre_checks <- function(data, sub_id, vary_a, vary_t0, vary_z, vary_v,
+  run_pre_checks <- function(data, sub_id, response, rt, vary_a, vary_t0, vary_z, vary_v,
                              vary_st0, vary_sz, vary_sv, fix_st0, st0_fixed,
                              fix_sz, sz_fixed) {
 
@@ -225,7 +233,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
             .groups = 'drop'
           )
 
-        for (i in 1:nrow(by_condition)) {
+        for (i in seq_len(nrow(by_condition))) {
           message("  Condition '", by_condition$temp_cond[i], "': ", by_condition$participants[i])
         }
 
@@ -248,12 +256,35 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       warnings_issued <- TRUE
     }
 
+    # Participants who only ever responded at one boundary: without any responses at the
+    # other boundary, boundary separation, drift rate and starting point are not well
+    # identified (the likelihood can keep increasing as a and v grow).
+    one_sided <- tapply(as.character(data[[response]]), as.character(data[[sub_id]]),
+                        function(x) length(unique(x)) < 2)
+    if (any(one_sided)) {
+      message("WARNING: Some participants gave all their responses at one boundary: ",
+              paste(names(one_sided)[one_sided], collapse = ", "),
+              ". Their estimates of a, v and z are unreliable.")
+      warnings_issued <- TRUE
+    }
+
+    # Very fast responses are usually anticipations. t0 cannot exceed the fastest RT it
+    # applies to, so a single such response can pull a participant's t0 estimate down.
+    fast <- table(as.character(data[[sub_id]])[data[[rt]] < 0.15])
+    if (length(fast) > 0) {
+      message("WARNING: Some participants have RTs below 0.15 s: ",
+              paste(names(fast), " (n=", fast, ")", sep = "", collapse = ", "),
+              ". t0 must be below a participant's fastest RT, so such responses can pull ",
+              "the t0 estimate down. Consider excluding them before fitting.")
+      warnings_issued <- TRUE
+    }
+
     return(warnings_issued)
   }
 
   # Run the pre-checks
   cat("Running pre-fit checks...\n")
-  warnings_issued <- run_pre_checks(data, sub_id, vary_a, vary_t0, vary_z, vary_v,
+  warnings_issued <- run_pre_checks(data, sub_id, response, rt, vary_a, vary_t0, vary_z, vary_v,
                                     vary_st0, vary_sz, vary_sv, fix_st0, st0_fixed,
                                     fix_sz, sz_fixed)
 
@@ -626,8 +657,6 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   # Run model
   for (i in RPlist) {
 
-    current_id <- RPlist[i]
-
     # read in one participant
     data.to.model <- df.rtdists %>% filter(.data$ID==i)
 
@@ -731,6 +760,18 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     }
     start_i <- pmin(pmax(start_i, lower_bounds), upper_i)
 
+    # A parameter that applies to no trials of this participant (e.g. a condition the
+    # participant has no data for) cannot be estimated. It is left out of this
+    # participant's fit and reported as NA, so it neither stays at its starting value nor
+    # makes the Hessian singular for the other parameters.
+    estimable <- vapply(contains_conditions_list, any, logical(1))
+    fit_names <- param_names[estimable]
+    fit_splits <- list_with_split_pars[estimable]
+    fit_conditions <- contains_conditions_list[estimable]
+    lower_i <- lower_bounds[estimable]
+    upper_i <- upper_i[estimable]
+    start_i <- start_i[estimable]
+
     ### --- Diagnostic: Print starting values per condition --- ###
 
     if (print_starting_vals == TRUE) {
@@ -746,7 +787,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # Trials that share all parameter values (same condition cell and the same tracking
     # pattern), so the likelihood can be computed once per group
     trial_groups <- unname(split(seq_len(nrow(data.to.model)), interaction(
-      data.to.model$cond, do.call(paste0, lapply(contains_conditions_list, as.integer)),
+      data.to.model$cond, do.call(paste0, lapply(fit_conditions, as.integer)),
       drop = TRUE)))
 
     # fit the model from a given starting vector
@@ -755,10 +796,10 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
              RT = data.to.model[["RT"]], response = data.to.model[["response"]],
              a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
              precision = precision, stop_on_error = stop_on_error,
-             param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
+             param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
              groups = trial_groups,
              control = list(iter.max = 10000, eval.max = 10000),
-             lower = lower_bounds,
+             lower = lower_i,
              upper = upper_i)
     }
 
@@ -767,11 +808,11 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # a parameter move together and the EZ pattern across conditions is kept). a and v are
     # scaled by 0.5-2 times their EZ start; the others cover their usual range. Deterministic,
     # so results are reproducible and the user's random seed is untouched.
-    par_types <- vapply(list_with_split_pars, `[`, character(1), 1)
+    par_types <- vapply(fit_splits, `[`, character(1), 1)
     alternative_start <- function(k) {
       s <- start_i
       primes <- c(a = 2, t0 = 3, z = 5, v = 7, st0 = 11, sz = 13, sv = 17)
-      for (p in seq_along(param_names)) {
+      for (p in seq_along(fit_names)) {
         type <- par_types[p]
         u <- halton(k, primes[[type]])
         s[p] <- switch(type,
@@ -788,7 +829,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
             0.9 * u * 2 * min(z_mean, 1 - z_mean) * a_mean
           })
       }
-      pmin(pmax(s, lower_bounds), upper_i)
+      pmin(pmax(s, lower_i), upper_i)
     }
 
     # Starting vector that moves sv and sz estimates stuck at 0 to clearly positive values.
@@ -797,22 +838,23 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # report convergence there even when a positive value fits better.
     nudged_start <- function(pars) {
       s <- pars
-      s[par_types == "sv" & s <= 1e-6] <- 1
-      if (any(par_types == "sz" & s <= 1e-6)) {
+      s[par_types == "sv" & s <= 1e-3] <- 1
+      if (any(par_types == "sz" & s <= 1e-3)) {
         a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
         z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
-        s[par_types == "sz" & s <= 1e-6] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
+        s[par_types == "sz" & s <= 1e-3] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
       }
-      pmin(pmax(s, lower_bounds), upper_i)
+      pmin(pmax(s, lower_i), upper_i)
     }
-    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-6)
+    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-3)
 
     fit <- run_fit(start_i)
     n_runs <- 1
     replicated <- NA
 
     # Retry (up to max_retries further optimizer runs) if the fit did not converge or an sv
-    # or sz estimate is exactly 0:
+    # or sz estimate is at 0 (below 0.001; how close the optimizer gets to exactly 0 differs
+    # between platforms):
     # 1) if it did not converge, restart the optimizer from where it stopped, which often
     #    completes a fit that stopped early;
     # 2) fit from further starting points (first with sv/sz stuck at 0 moved to positive
@@ -859,14 +901,14 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # Wald SEs require the estimate to lie inside its bounds. Parameters at (within 0.001 of)
     # a bound, e.g. sv = 0 or t0 at the fastest RT, get no SE, and the SEs of the other
     # parameters are computed with them held at their estimates.
-    se <- setNames(rep(NA_real_, length(param_names)), param_names)
+    se <- setNames(rep(NA_real_, length(fit_names)), fit_names)
     vcov_i <- NULL
     se_status <- "not computed"
     if (compute_se) {
-      at_bound <- (fit$par - lower_bounds < 1e-3) | (upper_i - fit$par < 1e-3)
+      at_bound <- (fit$par - lower_i < 1e-3) | (upper_i - fit$par < 1e-3)
       free <- which(!at_bound)
       bound_note <- if (any(at_bound)) {
-        paste0("no SE at bound: ", paste(param_names[at_bound], collapse = ", "))
+        paste0("no SE at bound: ", paste(fit_names[at_bound], collapse = ", "))
       } else NULL
       se_status <- if (is.null(bound_note)) "ok" else bound_note
       if (length(free) > 0) {
@@ -876,7 +918,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
           ll_fun(p, RT = data.to.model[["RT"]], response = data.to.model[["response"]],
                  a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
                  precision = max(precision, 4), stop_on_error = stop_on_error,
-                 param_names = param_names, contains_conditions_list = contains_conditions_list, list_with_split_pars = list_with_split_pars,
+                 param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
                  groups = trial_groups)
         }
         H <- tryCatch(numDeriv::hessian(nll_free, fit$par[free]), error = function(e) NULL)
@@ -889,14 +931,14 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
             se_status <- paste(c("Hessian not positive definite", bound_note), collapse = "; ")
           } else {
             vcov_i <- solve(H)
-            dimnames(vcov_i) <- list(param_names[free], param_names[free])
+            dimnames(vcov_i) <- list(fit_names[free], fit_names[free])
             se[free] <- sqrt(diag(vcov_i))
           }
         }
       }
     }
     seEsts[loopCount, "ID"] <- i
-    seEsts[loopCount, param_names] <- se
+    seEsts[loopCount, fit_names] <- se
     vcov_list[as.character(i)] <- list(vcov_i)
 
     fit_info[loopCount, ] <- list(i, n_runs, fit$convergence, replicated, fit$message, se_status)

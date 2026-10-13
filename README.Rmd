@@ -16,6 +16,8 @@ knitr::opts_chunk$set(
 # driftd
 
 <!-- badges: start -->
+[![R-CMD-check](https://github.com/JStrueder/driftd/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/JStrueder/driftd/actions/workflows/R-CMD-check.yaml)
+[![test-coverage](https://github.com/JStrueder/driftd/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/JStrueder/driftd/actions/workflows/test-coverage.yaml)
 <!-- badges: end -->
 
 driftd is a wrapper around the [rtdists](https://CRAN.R-project.org/package=rtdists) package (Singmann, Brown, Gretton, & Heathcote) that makes it easier to fit the diffusion decision model to response time data and to analyze the results. You specify which parameters vary across which conditions; driftd builds the likelihood, fits it to each participant by maximum likelihood, and provides standard errors, analysis-ready parameter tables, model fit checks, model comparison, parameter and model recovery, and simulation. All diffusion model computations are done by rtdists.

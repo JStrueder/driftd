@@ -52,7 +52,7 @@ test_that("a parameter at its bound gets no SE, and an sv stuck at 0 triggers a 
   d_sv <- simulate_ddm(300, a = 1.5, t0 = 0.3, z = 0.45, v = c(easy = 2, hard = 0.7), seed = 1)
   fit_sv <- quiet_driftd(d_sv, sub_id = "id", response = "resp", rt = "rt", vary_v = "cond",
                          fix_sv = FALSE, max_retries = 1)
-  expect_equal(fit_sv$individual_estimates$sv, 0)
+  expect_lt(fit_sv$individual_estimates$sv, 1e-3)  # at its bound of 0 (as close as the optimizer gets)
   expect_equal(fit_sv$fit_info$optimizer_runs, 2)         # the start with sv moved to 1
   expect_true(is.na(fit_sv$standard_errors$sv))
   expect_match(fit_sv$fit_info$se_status, "no SE at bound: sv")

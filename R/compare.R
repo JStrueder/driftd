@@ -99,7 +99,10 @@ compare_models <- function(..., names = NULL) {
   per <- do.call(rbind, lapply(seq_along(fits), function(m) {
     f <- fits[[m]]
     est <- f$individual_estimates[match(as.character(ids), as.character(f$individual_estimates[[id]])), ]
-    k <- sum(!f$settings$parameters$fixed)
+    # parameters estimated for each participant (a parameter of a condition a participant
+    # has no trials in is not estimated for them)
+    estimated <- f$settings$parameters$name[!f$settings$parameters$fixed]
+    k <- rowSums(!is.na(as.matrix(est[estimated])))
     data.frame(ID = ids, model = names[m], k = k, n_trials = n_trials, logLik = est$LLE,
                AIC = 2 * k - 2 * est$LLE, BIC = k * log(n_trials) - 2 * est$LLE,
                converge = est$converge, stringsAsFactors = FALSE)
@@ -267,11 +270,12 @@ nested_tests <- function(fits, names, per) {
     restricted <- per[per$model == names[i], ]
     full <- per[per$model == names[j], ]
     lr <- 2 * (full$logLik - restricted$logLik)
-    df_each <- full$k[1] - restricted$k[1]
+    df_each <- full$k - restricted$k
+    p_each <- ifelse(df_each > 0, stats::pchisq(pmax(lr, 0), pmax(df_each, 1), lower.tail = FALSE), 1)
     rows[[length(rows) + 1]] <- data.frame(
-      restricted = names[i], full = names[j], chisq = sum(lr), df = df_each * length(lr),
-      p = stats::pchisq(sum(lr), df_each * length(lr), lower.tail = FALSE),
-      n_significant = sum(stats::pchisq(pmax(lr, 0), df_each, lower.tail = FALSE) < 0.05),
+      restricted = names[i], full = names[j], chisq = sum(lr), df = sum(df_each),
+      p = stats::pchisq(sum(lr), sum(df_each), lower.tail = FALSE),
+      n_significant = sum(p_each < 0.05),
       n_negative = sum(lr < -1e-6), boundary = boundary, stringsAsFactors = FALSE)
   }
   if (length(rows) == 0) NULL else do.call(rbind, rows)
