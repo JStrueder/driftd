@@ -32,12 +32,12 @@
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
 #' @param compute_se Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).
 #' @param ask Logical: if TRUE (default) and R is running interactively, ask for confirmation before fitting when the pre-fit checks issue warnings (e.g. few trials per condition). Set to FALSE to always continue.
-#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is exactly 0. Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
+#' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is at 0 (below 0.001, the same tolerance used for parameters at a bound when computing standard errors). Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
 #' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
 #'
-#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is exactly 0 (where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
+#' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is at 0 (below 0.001; where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
 #'
 #' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
 #'
@@ -838,22 +838,23 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     # report convergence there even when a positive value fits better.
     nudged_start <- function(pars) {
       s <- pars
-      s[par_types == "sv" & s <= 1e-6] <- 1
-      if (any(par_types == "sz" & s <= 1e-6)) {
+      s[par_types == "sv" & s <= 1e-3] <- 1
+      if (any(par_types == "sz" & s <= 1e-3)) {
         a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
         z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
-        s[par_types == "sz" & s <= 1e-6] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
+        s[par_types == "sz" & s <= 1e-3] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
       }
       pmin(pmax(s, lower_i), upper_i)
     }
-    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-6)
+    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-3)
 
     fit <- run_fit(start_i)
     n_runs <- 1
     replicated <- NA
 
     # Retry (up to max_retries further optimizer runs) if the fit did not converge or an sv
-    # or sz estimate is exactly 0:
+    # or sz estimate is at 0 (below 0.001; how close the optimizer gets to exactly 0 differs
+    # between platforms):
     # 1) if it did not converge, restart the optimizer from where it stopped, which often
     #    completes a fit that stopped early;
     # 2) fit from further starting points (first with sv/sz stuck at 0 moved to positive
