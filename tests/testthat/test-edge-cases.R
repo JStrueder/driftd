@@ -56,12 +56,13 @@ test_that("tibbles, grouped tibbles and condition columns of any type give the s
   d <- d0
   d$cond <- factor(d$cond, levels = c("hard", "easy"))
   est <- estimate_values(fit_edge(d, vary_v = "cond"))
-  expect_equal(est[names(estimate_values(ref))], estimate_values(ref))
+  # reordered levels reorder the parameters, so the optimizer takes a slightly different path
+  expect_equal(est[names(estimate_values(ref))], estimate_values(ref), tolerance = 1e-5)
 
   d$cond <- ifelse(d0$cond == "easy", 1, 2)
   est <- estimate_values(fit_edge(d, vary_v = "cond"))
-  expect_equal(est$v_1, ref$individual_estimates$v_easy)
-  expect_equal(est$v_2, ref$individual_estimates$v_hard)
+  expect_equal(est$v_1, ref$individual_estimates$v_easy, tolerance = 1e-5)
+  expect_equal(est$v_2, ref$individual_estimates$v_hard, tolerance = 1e-5)
 })
 
 test_that("a parameter of a condition a participant has no trials in is NA for that participant", {
