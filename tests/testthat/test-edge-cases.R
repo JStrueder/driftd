@@ -119,6 +119,21 @@ test_that("a condition without errors is fitted, and only one-sided participants
   expect_true(any(grepl("all their responses at one boundary: 1\\.", msgs)))
 })
 
+test_that("data in which every response is at one boundary keep that boundary", {
+  # rtdists reads a factor response by its level number, so a factor with the single
+  # level "upper" was read as "lower" and gave a mirrored fit (a negative drift rate)
+  d <- d0[d0$id == 1, ]
+  for (r in list(1L, "upper", 0L, "lower")) {
+    d$resp <- r
+    fit <- fit_edge(d)
+    ll <- sum(log(rtdists::ddiffusion(d$rt, response = rep(if (r %in% list(1L, "upper")) "upper" else "lower", nrow(d)),
+      a = fit$individual_estimates$a, v = fit$individual_estimates$v, t0 = fit$individual_estimates$t0,
+      z = fit$individual_estimates$z * fit$individual_estimates$a)))
+    expect_equal(fit$individual_estimates$LLE, ll, tolerance = 1e-6)
+    expect_equal(sign(fit$individual_estimates$v), if (r %in% list(1L, "upper")) 1 else -1)
+  }
+})
+
 test_that("very fast RTs are warned about, because they pull t0 down", {
   d <- d0
   d$rt[1] <- 0.05
