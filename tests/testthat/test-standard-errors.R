@@ -65,3 +65,22 @@ test_that("max_retries = 0 never retries", {
                          fix_sv = FALSE, max_retries = 0, compute_se = FALSE)
   expect_equal(fit_sv$fit_info$optimizer_runs, 1)
 })
+
+test_that("standard errors are valid when t0 is close to the fastest RT", {
+  # Narrow boundaries give a steep leading edge, so t0 ends up a few ms below the fastest RT.
+  # numDeriv's default step (10% of t0) then crossed the fastest RT, and the Hessian was
+  # reported as not positive definite.
+  d_t0 <- simulate_ddm(500, a = 0.67, t0 = 0.44, z = 0.53, v = c(easy = 0.32, hard = 2.2), seed = 9)
+  fit_t0 <- quiet_driftd(d_t0, sub_id = "id", response = "resp", rt = "rt", vary_v = "cond")
+  expect_equal(fit_t0$fit_info$se_status, "ok")
+  est <- unlist(fit_t0$individual_estimates[c("a", "t0", "z", "v_easy", "v_hard")])
+  expect_lt(min(d_t0$rt) - est[["t0"]], 0.02)
+
+  resp <- ifelse(d_t0$resp == 1, "upper", "lower")
+  easy <- d_t0$cond == "easy"
+  nll <- function(p) -sum(log(rtdists::ddiffusion(d_t0$rt, resp, a = p[1], t0 = p[2], z = p[3] * p[1],
+                                                  v = ifelse(easy, p[4], p[5]), precision = 4)))
+  H <- stats::optimHess(est, nll, control = list(ndeps = rep(1e-5, 5)))
+  expect_equal(unlist(fit_t0$standard_errors[c("a", "t0", "z", "v_easy", "v_hard")]),
+               sqrt(diag(solve(H))), tolerance = 0.02, ignore_attr = TRUE)
+})

@@ -350,10 +350,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   }
 
   df.rtdists = data.frame(ID, cond, response, RT)
-  df.rtdists$response <- factor(df.rtdists$response) # define 1 = upper boundary, 0 = lower boundary
-  if (length(levels(df.rtdists$response)) > 1) {     # Check if the factor has more than 1 level before releveling
-    df.rtdists$response <- relevel(df.rtdists$response, ref="lower")
-  }
+  # rtdists reads a factor response by its level number (1 = lower, 2 = upper), so both
+  # levels must always exist, even when every response is at the same boundary
+  df.rtdists$response <- factor(df.rtdists$response, levels = c("lower", "upper"))
 
   # RP List. Will be used to loop over RPs later on
   RPlist <- unique(df.rtdists$ID)
@@ -921,7 +920,15 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                  param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
                  groups = trial_groups)
         }
-        H <- tryCatch(numDeriv::hessian(nll_free, fit$par[free]), error = function(e) NULL)
+        # numDeriv's largest step is d * |x| (d = 0.1 by default). A step past a bound, e.g.
+        # t0 beyond the fastest RT, gives trials a likelihood of 0 and a meaningless Hessian,
+        # so d is reduced to keep every step at most halfway to the nearest bound.
+        x_free <- fit$par[free]
+        gap <- pmin(x_free - lower_i[free], upper_i[free] - x_free)
+        rel_gap <- gap / pmax(abs(x_free), 1e-4)
+        step_d <- min(0.1, 0.5 * min(rel_gap))
+        H <- tryCatch(numDeriv::hessian(nll_free, x_free, method.args = list(d = step_d)),
+                      error = function(e) NULL)
         if (is.null(H) || any(!is.finite(H))) {
           se_status <- paste(c("Hessian could not be computed", bound_note), collapse = "; ")
         } else {
