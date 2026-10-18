@@ -106,9 +106,9 @@ prediction intervals from simulated data:
 pred <- predict(fit_at0, seed = 1)
 ```
 
-Large points are averages over participants, crosses are predictions, and small points are
-individual participants. Bars show where 95% of individual participants' values are expected
-to lie under the model.
+Crosses are observed averages over participants, large points are predictions, and small
+points are individual participants. Bars show where 95% of individual participants' values are
+expected to lie under the model.
 
 ```{r fit-choice}
 plot(pred, type = "choice", response_labels = c(upper = "word", lower = "nonword"))

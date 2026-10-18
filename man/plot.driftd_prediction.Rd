@@ -29,14 +29,14 @@
 \item{type}{The plot type:
 \itemize{
 \item \code{"rt"} (default): RT quantiles. RT on the x-axis and quantile level on the
-y-axis, one column of panels per response. Large points are observed quantiles
-averaged over participants, crosses are model predictions, horizontal bars are
+y-axis, one column of panels per response. Crosses are observed quantiles averaged
+over participants, large points are model predictions, horizontal bars are
 prediction intervals for individual participants, and small faint points are
 individual participants.
 \item \code{"choice"}: probability of one response (see \code{response}) across the
-levels of a condition column (\code{x}). Large points are observed probabilities
-averaged over participants, crosses and lines are predictions, vertical bars are
-prediction intervals for individual participants, and small faint points are
+levels of a condition column (\code{x}). Crosses are observed probabilities
+averaged over participants, large points and dashed lines are predictions, vertical
+bars are prediction intervals for individual participants, and small faint points are
 individual participants.
 \item \code{"scatter"}: observed against predicted values, one panel per statistic
 (P(upper) and the RT quantiles in \code{quantiles} for each response), with the
@@ -48,7 +48,10 @@ fitted participants.
 \item \code{"qp"}: quantile-probability plot (Ratcliff & McKoon, 2008): RT quantiles of
 each response plotted against its response probability, all cells in one panel. Most
 readable for designs with a single condition column that orders difficulty.
-}}
+}
+As in Ratcliff's quantile-probability plots, data are drawn as crosses and model
+predictions as circles (joined by lines where there is an order), with prediction
+intervals around the predictions.}
 
 \item{participant}{Optional participant ID: plot only this participant's data and
 predictions instead of group averages.}

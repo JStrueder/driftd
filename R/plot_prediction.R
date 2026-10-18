@@ -9,14 +9,14 @@
 #' @param type The plot type:
 #'   \itemize{
 #'     \item \code{"rt"} (default): RT quantiles. RT on the x-axis and quantile level on the
-#'       y-axis, one column of panels per response. Large points are observed quantiles
-#'       averaged over participants, crosses are model predictions, horizontal bars are
+#'       y-axis, one column of panels per response. Crosses are observed quantiles averaged
+#'       over participants, large points are model predictions, horizontal bars are
 #'       prediction intervals for individual participants, and small faint points are
 #'       individual participants.
 #'     \item \code{"choice"}: probability of one response (see \code{response}) across the
-#'       levels of a condition column (\code{x}). Large points are observed probabilities
-#'       averaged over participants, crosses and lines are predictions, vertical bars are
-#'       prediction intervals for individual participants, and small faint points are
+#'       levels of a condition column (\code{x}). Crosses are observed probabilities
+#'       averaged over participants, large points and dashed lines are predictions, vertical
+#'       bars are prediction intervals for individual participants, and small faint points are
 #'       individual participants.
 #'     \item \code{"scatter"}: observed against predicted values, one panel per statistic
 #'       (P(upper) and the RT quantiles in \code{quantiles} for each response), with the
@@ -29,6 +29,9 @@
 #'       each response plotted against its response probability, all cells in one panel. Most
 #'       readable for designs with a single condition column that orders difficulty.
 #'   }
+#'   As in Ratcliff's quantile-probability plots, data are drawn as crosses and model
+#'   predictions as circles (joined by lines where there is an order), with prediction
+#'   intervals around the predictions.
 #' @param participant Optional participant ID: plot only this participant's data and
 #'   predictions instead of group averages.
 #' @param by Character vector of condition columns to keep when averaging over participants
@@ -249,15 +252,15 @@ plot_rt <- function(x, g, info, by, color, panels, individuals, intervals, rt_un
                                    linewidth = 0.5, na.rm = TRUE)
   }
   p <- p +
-    ggplot2::geom_point(ggplot2::aes(x = .data$observed * scale), size = 2.8) +
-    ggplot2::geom_point(ggplot2::aes(x = .data$predicted * scale), shape = 4, size = 2.4, stroke = 1.1,
+    ggplot2::geom_point(ggplot2::aes(x = .data$predicted * scale), size = 2.8) +
+    ggplot2::geom_point(ggplot2::aes(x = .data$observed * scale), shape = 4, size = 2.4, stroke = 1.1,
                         colour = "black") +
     color_scale(roles$color, levels_col) +
     ggplot2::scale_y_continuous(breaks = info$probs) +
     ggplot2::labs(x = paste0("RT (", rt_unit, ")"), y = "Quantile",
                   title = paste0("RT quantiles (", title_suffix(participant), ")"),
-                  caption = wrap_caption(paste0("Large points: observed", if (is.null(participant)) " (average over participants)",
-                                   ". Crosses: model predictions.",
+                  caption = wrap_caption(paste0("Crosses: observed", if (is.null(participant)) " (average over participants)",
+                                   ". Large points: model predictions.",
                                    if (intervals) interval_caption(participant, info$level) else "",
                                    if (individuals) " Small points: individual participants." else ""))) +
     ggplot2::theme_bw() +
@@ -302,15 +305,15 @@ plot_choice <- function(x, g, info, by, x_var, color, panels, response, individu
     p <- p + ggplot2::geom_line(ggplot2::aes(y = .data$predicted), position = dodge, linewidth = 0.5, linetype = "dashed")
   }
   p <- p +
-    ggplot2::geom_point(ggplot2::aes(y = .data$predicted), position = dodge, shape = 4, size = 2.4, stroke = 1.1,
+    ggplot2::geom_point(ggplot2::aes(y = .data$predicted), position = dodge, size = 2.8) +
+    ggplot2::geom_point(ggplot2::aes(y = .data$observed), position = dodge, shape = 4, size = 2.4, stroke = 1.1,
                         colour = "black") +
-    ggplot2::geom_point(ggplot2::aes(y = .data$observed), position = dodge, size = 2.8) +
     color_scale(roles$color, levels_col) +
     ggplot2::scale_y_continuous(limits = c(0, 1)) +
     ggplot2::labs(x = if (is.null(roles$x)) NULL else roles$x, y = paste0("P(", labels[[response]], ")"),
                   title = paste0("Response probabilities (", title_suffix(participant), ")"),
-                  caption = wrap_caption(paste0("Large points: observed", if (is.null(participant)) " (average over participants)",
-                                   ". Crosses and dashed lines: model predictions.",
+                  caption = wrap_caption(paste0("Crosses: observed", if (is.null(participant)) " (average over participants)",
+                                   ". Large points and dashed lines: model predictions.",
                                    if (intervals) interval_caption(participant, info$level) else "",
                                    if (individuals) " Small points: individual participants." else ""))) +
     ggplot2::theme_bw() +
@@ -336,15 +339,16 @@ plot_qp <- function(g, panels, intervals, participant) {
                                     colour = "grey60", width = 0.015, linewidth = 0.3, na.rm = TRUE)
   }
   p <- p +
-    ggplot2::geom_point(ggplot2::aes(x = .data$p_pred, y = .data$predicted), shape = 4, colour = "grey30", size = 1.8) +
-    ggplot2::geom_point(ggplot2::aes(x = .data$p_obs, y = .data$observed, colour = .data$response), size = 2) +
+    ggplot2::geom_point(ggplot2::aes(x = .data$p_pred, y = .data$predicted), shape = 1, colour = "grey30", size = 1.8) +
+    ggplot2::geom_point(ggplot2::aes(x = .data$p_obs, y = .data$observed, colour = .data$response), shape = 4,
+                        size = 2, stroke = 1.1) +
     ggplot2::scale_colour_manual(values = response_colors, name = "Response") +
     ggplot2::scale_x_continuous(limits = c(0, 1)) +
     ggplot2::labs(x = "Response probability", y = "RT quantile (s)",
                   title = paste0("Quantile-probability plot (", title_suffix(participant), ")"),
-                  caption = paste0("Points: observed. Crosses and lines: predicted (quantiles ",
+                  caption = wrap_caption(paste0("Crosses: observed. Circles and lines: predicted (quantiles ",
                                    paste(levels(qs$quantile_label), collapse = ", "), ")",
-                                   if (intervals) ". Bars: prediction intervals." else ".")) +
+                                   if (intervals) ". Bars: prediction intervals." else "."))) +
     ggplot2::theme_bw()
   if (length(panels) > 0) p <- p + ggplot2::facet_wrap(panels, labeller = "label_both")
   p
