@@ -89,6 +89,12 @@ compare_models <- function(..., names = NULL) {
   }
   if (length(names) != length(fits) || anyDuplicated(names)) stop("names must be unique, one per model")
   check_same_data(fits, names)
+  # log-likelihoods of models with different outlier components are not comparable
+  p_out <- vapply(fits, fit_p_outlier, numeric(1))
+  if (length(unique(p_out)) > 1) {
+    warning("The models were fitted with different p_outlier (", paste(p_out, collapse = ", "),
+            "), so their log-likelihoods, AIC and BIC are not comparable.", call. = FALSE)
+  }
 
   id <- fits[[1]]$settings$columns$sub_id
   d <- fits[[1]]$data
