@@ -33,6 +33,8 @@ driftd(
   precision = 3,
   stop_on_error = FALSE,
   print_starting_vals = FALSE,
+  p_outlier = 0,
+  w_outlier = 0.1,
   max_retries = 5,
   compute_se = TRUE,
   ask = TRUE
@@ -95,6 +97,10 @@ driftd(
 
 \item{print_starting_vals}{Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.}
 
+\item{p_outlier}{Numeric between 0 and 1: the assumed proportion of outlier (contaminant) trials, as in HDDM (Wiecki, Sofer, & Frank, 2013). If above 0, each trial's likelihood is a mixture of the diffusion model density and a uniform outlier density, \code{(1 - p_outlier) * ddiffusion + p_outlier * w_outlier}, so a few trials the diffusion model cannot explain (e.g. fast guesses or lapses) cannot distort the estimates. \code{p_outlier} is fixed, not estimated. Default is 0 (no outlier component); HDDM recommends 0.05. See Details.}
+
+\item{w_outlier}{Numeric: the density of the outlier distribution, as in HDDM. The default of 0.1 is HDDM's, a uniform distribution of RTs between 0 and 5 s with both responses equally likely (\code{1 / (2 * 5)}). Only used if \code{p_outlier > 0}.}
+
 \item{max_retries}{Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is at 0 (below 0.001, the same tolerance used for parameters at a bound when computing standard errors). Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.}
 
 \item{compute_se}{Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).}
@@ -116,9 +122,11 @@ A list of class \code{driftd_results} containing:
 Fits a drift-diffusion model (DDM) to response time (RT) and response data for individual participants using maximum likelihood estimation via \code{nlminb}.
 }
 \details{
-The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
+The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to (with \code{p_outlier > 0}, see Outliers below). It includes pre-checks for data quality.
 
 Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is at 0 (below 0.001; where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
+
+\strong{Outliers.} With \code{p_outlier > 0}, driftd follows HDDM's robust likelihood (Ratcliff & Tuerlinckx, 2002; Wiecki et al., 2013). Every trial has a likelihood of at least \code{p_outlier * w_outlier}, so a trial the diffusion model cannot explain, such as a fast guess below \code{t0}, adds a bounded cost instead of pulling the parameters towards it. For the same reason, \code{t0} is then no longer bounded above by the fastest RT, but by the 10\% quantile of the RTs it applies to, so that a few fast outliers cannot pull it down. The outlier component is part of the likelihood only: as in HDDM, \code{predict()}, \code{simulate()} and the recovery functions generate data from the diffusion model alone, so trials that the model treats as outliers show up as misfit in the model checks. The log-likelihood, AIC and BIC are those of the mixture, so only compare models fitted with the same \code{p_outlier}.
 
 Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95\% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
 }

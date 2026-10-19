@@ -119,7 +119,8 @@ predict.driftd_results <- function(object, probs = c(0.1, 0.3, 0.5, 0.7, 0.9), i
 
     if (intervals) {
       par_list <- if (parameter_uncertainty) {
-        lapply(draw_parameters(est_row, object$vcov[[as.character(pid)]], n_sim, min(d[[cols$rt]][d[[id]] == pid])),
+        lapply(draw_parameters(est_row, object$vcov[[as.character(pid)]], n_sim,
+                                t0_cap(d[[cols$rt]][d[[id]] == pid], fit_p_outlier(object))),
                get_parameters_for_condition, condition = cd, settings = object$settings)
       } else {
         list(pars)
@@ -335,7 +336,8 @@ simulate.driftd_results <- function(object, nsim = 1, seed = NULL, parameter_unc
     est_row <- est[est[[id]] == pid, , drop = FALSE]
     n <- length(idx)
     if (parameter_uncertainty) {
-      draws <- draw_parameters(est_row, object$vcov[[as.character(pid)]], nsim, min(d[[cols$rt]][d[[id]] == pid]))
+      draws <- draw_parameters(est_row, object$vcov[[as.character(pid)]], nsim,
+                               t0_cap(d[[cols$rt]][d[[id]] == pid], fit_p_outlier(object)))
       s <- do.call(rbind, lapply(draws, function(row) {
         simulate_cell(get_parameters_for_condition(row, cd, object$settings), n)
       }))
@@ -453,7 +455,22 @@ predicted_statistics <- function(p, probs, precision = 3) {
   c(p_resp[["upper"]], q_for("upper"), p_resp[["lower"]], q_for("lower"))
 }
 
-# Simulate n trials of one cell; returns a data frame with rt and response.
+# Upper limit of t0 for a set of RTs: the fastest RT, or with an outlier component
+# (p_outlier > 0) the 10% quantile, so that a few fast outliers do not bound t0.
+#' @noRd
+t0_cap <- function(rt, p_outlier = 0) {
+  if (p_outlier > 0) stats::quantile(rt, 0.1, names = FALSE) else min(rt)
+}
+
+# The outlier proportion a model was fitted with (0 for fits without one).
+#' @noRd
+fit_p_outlier <- function(object) {
+  p <- object$settings$p_outlier
+  if (is.null(p)) 0 else p
+}
+
+# Simulate n trials of one cell; returns a data frame with rt and response. As in HDDM, the
+# outlier component of the likelihood (p_outlier) is not simulated.
 #' @noRd
 simulate_cell <- function(p, n) {
   rtdists::rdiffusion(n, a = p$a, v = p$v, t0 = p$t0, z = p$z * p$a, sz = p$sz, sv = p$sv, st0 = p$st0)
@@ -493,7 +510,7 @@ interval_bounds <- function(rep_mat, level) {
 # with the estimates as means and vcov as covariance, truncated to the fitting bounds.
 # Returns a list of one-row data frames in the layout of individual_estimates.
 #' @noRd
-draw_parameters <- function(est_row, vcov, n_sim, min_rt) {
+draw_parameters <- function(est_row, vcov, n_sim, max_t0) {
   if (is.null(vcov)) {
     warning("No variance-covariance matrix for participant ", est_row[[1]],
             "; using the point estimates for all replicates.", call. = FALSE)
@@ -510,7 +527,7 @@ draw_parameters <- function(est_row, vcov, n_sim, min_rt) {
   draws <- sweep(draws, 2, unlist(est_row[free]), "+")
   type <- sub("_.*", "", free)
   lower <- c(a = 0.01, t0 = 0, z = 0, v = -Inf, st0 = 0, sz = 0, sv = 0)[type]
-  upper <- c(a = Inf, t0 = 0.999 * min_rt, z = 1, v = Inf, st0 = Inf, sz = 1, sv = Inf)[type]
+  upper <- c(a = Inf, t0 = 0.999 * max_t0, z = 1, v = Inf, st0 = Inf, sz = 1, sv = Inf)[type]
   draws <- sweep(sweep(draws, 2, lower, pmax), 2, upper, pmin)
   lapply(seq_len(n_sim), function(r) {
     row <- est_row

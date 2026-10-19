@@ -32,12 +32,16 @@
 #' @param print_starting_vals Logical: If TRUE, prints the derived starting parameter estimates for each participant. Default is FALSE.
 #' @param compute_se Logical: If TRUE (default), computes standard errors of the estimated parameters from the numerical Hessian of the log-likelihood (see Details).
 #' @param ask Logical: if TRUE (default) and R is running interactively, ask for confirmation before fitting when the pre-fit checks issue warnings (e.g. few trials per condition). Set to FALSE to always continue.
+#' @param p_outlier Numeric between 0 and 1: the assumed proportion of outlier (contaminant) trials, as in HDDM (Wiecki, Sofer, & Frank, 2013). If above 0, each trial's likelihood is a mixture of the diffusion model density and a uniform outlier density, \code{(1 - p_outlier) * ddiffusion + p_outlier * w_outlier}, so a few trials the diffusion model cannot explain (e.g. fast guesses or lapses) cannot distort the estimates. \code{p_outlier} is fixed, not estimated. Default is 0 (no outlier component); HDDM recommends 0.05. See Details.
+#' @param w_outlier Numeric: the density of the outlier distribution, as in HDDM. The default of 0.1 is HDDM's, a uniform distribution of RTs between 0 and 5 s with both responses equally likely (\code{1 / (2 * 5)}). Only used if \code{p_outlier > 0}.
 #' @param max_retries Integer: Maximum number of additional optimizer runs for a participant whose fit does not converge, or whose estimate of \code{sv} or \code{sz} is at 0 (below 0.001, the same tolerance used for parameters at a bound when computing standard errors). Retries continue until the best converged solution has been reached from two independent starting points. Set to 0 to disable retries. Default is 5.
 #'
 #' @details
-#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to. It includes pre-checks for data quality.
+#' The function estimates DDM parameters (\code{a, t0, z, v, st0, sz, sv}) for each participant individually, allowing parameters to vary across experimental conditions specified in the \code{vary_} arguments. It uses the maximum likelihood method with the \code{rtdists::ddiffusion} function. Note that \code{z} is estimated as a proportion (0 to 1) and internally converted to \code{z * a} for \code{ddiffusion}. A parameter cannot be both fixed (\code{fix_} = TRUE) and varied across conditions (\code{vary_}); this combination is an error. \code{t0} is bounded above by the fastest RT it applies to (with \code{p_outlier > 0}, see Outliers below). It includes pre-checks for data quality.
 #'
 #' Starting values for \code{v}, \code{a} and \code{t0} are EZ-diffusion estimates (Wagenmakers, van der Maas, & Grasman, 2007) computed per participant and condition cell. If a fit does not converge, the optimizer is first restarted from where it stopped. If it still does not converge, or if an estimate of \code{sv} or \code{sz} is at 0 (below 0.001; where the likelihood is flat in these parameters, so the optimizer can stop there even when a positive value fits better), the model is refitted from further starting values: first with \code{sv}/\code{sz} moved to positive values, then alternative starting values spread over the plausible parameter space with a deterministic Halton sequence. This continues until the best converged solution has been found from two independent starting points or \code{max_retries} is reached. The fit with the highest likelihood is kept.
+#'
+#' \strong{Outliers.} With \code{p_outlier > 0}, driftd follows HDDM's robust likelihood (Ratcliff & Tuerlinckx, 2002; Wiecki et al., 2013). Every trial has a likelihood of at least \code{p_outlier * w_outlier}, so a trial the diffusion model cannot explain, such as a fast guess below \code{t0}, adds a bounded cost instead of pulling the parameters towards it. For the same reason, \code{t0} is then no longer bounded above by the fastest RT, but by the 10% quantile of the RTs it applies to, so that a few fast outliers cannot pull it down. The outlier component is part of the likelihood only: as in HDDM, \code{predict()}, \code{simulate()} and the recovery functions generate data from the diffusion model alone, so trials that the model treats as outliers show up as misfit in the model checks. The log-likelihood, AIC and BIC are those of the mixture, so only compare models fitted with the same \code{p_outlier}.
 #'
 #' Standard errors are the square roots of the diagonal of the inverse of the Hessian of the negative log-likelihood at the maximum likelihood estimates (the observed Fisher information), computed numerically with Richardson extrapolation (\code{numDeriv::hessian}) at a \code{precision} of at least 4. They are asymptotic (Wald) standard errors; approximate 95% confidence intervals are estimate +/- 1.96 SE. Parameters estimated at (within 0.001 of) a bound, such as \code{sv = 0} or \code{t0} at the fastest RT, get no standard error, because the usual asymptotic theory does not hold there; the standard errors of the other parameters are then computed with these held at their estimates. If the Hessian is not positive definite (the fit is not a proper maximum, or a parameter is not identified), no standard errors are reported for that participant.
 #'
@@ -89,6 +93,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                    stop_on_error = FALSE,
 
                    print_starting_vals = FALSE,
+
+                   p_outlier = 0,
+                   w_outlier = 0.1,
 
                    max_retries = 5,
 
@@ -170,7 +177,8 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                      fix_st0 = fix_st0, fix_sz = fix_sz, fix_sv = fix_sv,
                      a_fixed = a_fixed, t0_fixed = t0_fixed, z_fixed = z_fixed, v_fixed = v_fixed,
                      st0_fixed = st0_fixed, sz_fixed = sz_fixed, sv_fixed = sv_fixed,
-                     precision = precision, stop_on_error = stop_on_error, max_retries = max_retries)
+                     precision = precision, stop_on_error = stop_on_error, max_retries = max_retries,
+                     p_outlier = p_outlier, w_outlier = w_outlier)
 
   # Validate parameter bounds
   if (a_fixed <= 0) stop("a_fixed must be positive")
@@ -180,6 +188,12 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   if (st0_fixed < 0) stop("st0_fixed cannot be negative")
   if (sz_fixed < 0 || sz_fixed > 1) stop("sz_fixed must be between 0 and 1")
   if (sv_fixed < 0) stop("sv_fixed cannot be negative")
+  if (!is.numeric(p_outlier) || length(p_outlier) != 1 || is.na(p_outlier) || p_outlier < 0 || p_outlier >= 1) {
+    stop("p_outlier must be a single number between 0 and 1 (0 = no outlier component)")
+  }
+  if (!is.numeric(w_outlier) || length(w_outlier) != 1 || is.na(w_outlier) || w_outlier <= 0) {
+    stop("w_outlier must be a single positive number")
+  }
   # sz is the range of starting points on the scale of a (as in rtdists), so all starting
   # points lie between the boundaries only if sz < 2 * min(z, 1 - z) * a. Otherwise every
   # trial has likelihood 0. This can be checked in advance when a, z and sz are all fixed.
@@ -534,7 +548,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                      a_start_val, t0_start_val, z_start_val, v_start_val, st0_start_val, sz_start_val, sv_start_val,
                      precision, stop_on_error,
                      param_names, contains_conditions_list, list_with_split_pars,
-                     groups = NULL) {
+                     groups = NULL, p_outlier = 0, w_outlier = 0.1) {
 
     # Initialize base parameter vectors
     a   <- a_start_val
@@ -583,6 +597,13 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
         st0 = at(st0), sz = at(sz), sv = at(sv),
         precision = precision, stop_on_error = stop_on_error
       )
+    }
+
+    # Outlier mixture as in HDDM: each trial comes from the diffusion model with probability
+    # 1 - p_outlier, and otherwise from a uniform outlier distribution with density w_outlier
+    if (p_outlier > 0) {
+      dens[is.na(dens) | dens < 0] <- 0
+      dens <- (1 - p_outlier) * dens + p_outlier * w_outlier
     }
 
     # Handle invalid densities. A density of 0 usually means the true density is too
@@ -687,7 +708,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
         n_trials = n(),
         meanRT = mean(.data$RT_sec, na.rm = TRUE),
         varRT  = stats::var(.data$RT_sec, na.rm = TRUE),
-        minRT  = min(.data$RT_sec, na.rm = TRUE),
+        minRT  = t0_cap(.data$RT_sec, p_outlier),
         q10RT  = quantile(.data$RT_sec, probs = 0.1, na.rm = TRUE, names = FALSE),
         prop_upper = mean(.data$response == "upper", na.rm = TRUE),
         .groups = "drop"
@@ -695,8 +716,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
     # ---------- 4) Starting guesses from EZ-diffusion ----------
     # EZ (Wagenmakers et al., 2007) gives closed-form estimates of v, a and t0 per condition
-    # cell. t0 is kept below the fastest RT so every trial has a non-zero likelihood at the
-    # start. z starts unbiased, and the variability parameters at small values.
+    # cell. t0 is kept below the fastest RT (the 10% quantile with an outlier component) so
+    # every trial has a non-zero likelihood at the start. z starts unbiased, and the
+    # variability parameters at small values.
     ez <- ez_diffusion(cond_summaries$prop_upper, cond_summaries$meanRT,
                        cond_summaries$varRT, cond_summaries$n_trials)
     cond_summaries <- cond_summaries %>%
@@ -749,7 +771,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       par_type <- list_with_split_pars[[p]][1]
       trials <- contains_conditions_list[[p]]
       if (par_type == "t0" && any(trials)) {
-        upper_i[p] <- 0.999 * min(data.to.model$RT[trials])
+        upper_i[p] <- 0.999 * t0_cap(data.to.model$RT[trials], p_outlier)
       }
       guesses <- data.to.model[[paste0(par_type, "_guess")]][trials]
       guesses <- guesses[is.finite(guesses)]
@@ -796,7 +818,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
              a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
              precision = precision, stop_on_error = stop_on_error,
              param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
-             groups = trial_groups,
+             groups = trial_groups, p_outlier = p_outlier, w_outlier = w_outlier,
              control = list(iter.max = 10000, eval.max = 10000),
              lower = lower_i,
              upper = upper_i)
@@ -918,7 +940,7 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                  a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
                  precision = max(precision, 4), stop_on_error = stop_on_error,
                  param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
-                 groups = trial_groups)
+                 groups = trial_groups, p_outlier = p_outlier, w_outlier = w_outlier)
         }
         # numDeriv's largest step is d * |x| (d = 0.1 by default). A step past a bound, e.g.
         # t0 beyond the fastest RT, gives trials a likelihood of 0 and a meaningless Hessian,
@@ -1052,7 +1074,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       model = model_spec,
       condition_columns = conditions,
       columns = list(sub_id = S, response = R, rt = React),
-      precision = precision
+      precision = precision,
+      p_outlier = p_outlier,
+      w_outlier = w_outlier
     ),
     data = processed_data,
     convergence = table(paramEsts$converge),
