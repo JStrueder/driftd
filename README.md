@@ -20,23 +20,20 @@ All diffusion model computations are done by rtdists.
 
 ## Installation
 
-From CRAN (when available):
+Install the current release from GitHub with [pak](https://pak.r-lib.org):
 
 ``` r
-install.packages("driftd")
+# install.packages("pak")
+pak::pak("JStrueder/driftd@v0.1.0")
 ```
 
-Development version from GitHub:
+To get the latest development version instead, use `pak::pak("JStrueder/driftd")`.
+
+The vignette is a complete worked analysis, from the data to reporting. To install it along with the package:
 
 ``` r
-devtools::install_github("JStrueder/driftd")
-```
-
-To also install the vignette, a complete worked analysis from the data
-to reporting:
-
-``` r
-devtools::install_github("JStrueder/driftd", build_vignettes = TRUE)
+# install.packages("remotes")
+remotes::install_github("JStrueder/driftd@v0.1.0", build_vignettes = TRUE)
 vignette("driftd", package = "driftd")
 ```
 
@@ -115,13 +112,13 @@ task. *Journal of Memory and Language, 58*(1), 140-159.
 
 ## License and citation
 
-driftd is licensed under the GNU General Public License, version 3 or
-later (see `LICENSE.md`). Please cite the package, and rtdists, when
-used in research:
+driftd is licensed under the GNU General Public License, version 3 or later (see `LICENSE.md`). If you use driftd in research, please cite it and rtdists:
 
-``` r
-citation("driftd")
-```
+Strueder, J. D. (2026). driftd: Easy diffusion model fitting and model checks via 'rtdists'. R package version 0.1.0. https://github.com/JStrueder/driftd
+
+Singmann, H., Brown, S., Gretton, M., & Heathcote, A. (2022). rtdists: Response time distributions. R package. https://CRAN.R-project.org/package=rtdists
+
+`citation("driftd")` prints both references, and `toBibtex(citation("driftd"))` gives them in BibTeX format.
 
 ## Contact and issues
 

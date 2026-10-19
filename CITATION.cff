@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use driftd, please cite it as below, and also cite rtdists."
+type: software
+title: "driftd: Easy Diffusion Model Fitting and Model Checks via 'rtdists'"
+version: 0.1.0
+date-released: 2026-10-19
+license: GPL-3.0-or-later
+repository-code: "https://github.com/JStrueder/driftd"
+authors:
+  - family-names: Strueder
+    given-names: Jeremy D.
+    email: jstrueder@iese.edu
+references:
+  - type: software
+    title: "rtdists: Response Time Distributions"
+    year: 2022
+    url: "https://CRAN.R-project.org/package=rtdists"
+    authors:
+      - family-names: Singmann
+        given-names: Henrik
+      - family-names: Brown
+        given-names: Scott
+      - family-names: Gretton
+        given-names: Matthew
+      - family-names: Heathcote
+        given-names: Andrew

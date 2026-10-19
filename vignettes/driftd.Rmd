@@ -373,8 +373,8 @@ Please cite driftd and rtdists:
 
 ```r
 citation("driftd")
-#> Strueder, J. D. (2025). driftd: Easy diffusion model fitting and model checks via
-#> 'rtdists'. R package version 0.0.0.9000. https://github.com/JStrueder/driftd
+#> Strueder, J. D. (2026). driftd: Easy diffusion model fitting and model checks via
+#> 'rtdists'. R package version 0.1.0. https://github.com/JStrueder/driftd
 #> 
 #> driftd computes all diffusion model densities with rtdists. Please also cite:
 #> 
