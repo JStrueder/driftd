@@ -2,11 +2,11 @@ bibentry(
   bibtype = "Manual",
   title = "driftd: Easy Diffusion Model Fitting and Model Checks via 'rtdists'",
   author = person("Jeremy D.", "Strueder"),
-  year = "2025",
+  year = "2026",
   note = paste("R package version", meta$Version),
   url = "https://github.com/JStrueder/driftd",
   textVersion = paste0(
-    "Strueder, J. D. (2025). driftd: Easy diffusion model fitting and model checks via ",
+    "Strueder, J. D. (2026). driftd: Easy diffusion model fitting and model checks via ",
     "'rtdists'. R package version ", meta$Version, ". https://github.com/JStrueder/driftd"
   )
 )
