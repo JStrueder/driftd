@@ -105,38 +105,18 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
 )
 {
-  #SECTION 0: PRECHECKS AND WARNINGS
+  # ---- 1. Check the input ------------------------------------------------------------------
 
-  # Check that data is dataframe
-  if (!is.data.frame(data)) {
-    stop("'data' must be a data frame")
-  }
-
-  # check that required columns are there
-  required_cols <- c(sub_id, response, rt)
-  missing_cols <- setdiff(required_cols, names(data))
+  if (!is.data.frame(data)) stop("'data' must be a data frame")
+  missing_cols <- setdiff(c(sub_id, response, rt), names(data))
   if (length(missing_cols) > 0) {
     stop("The following specified columns were not found in data: ",
          paste(missing_cols, collapse = ", "))
   }
-
-  # Check for missing values in critical columns
-  if (any(is.na(data[[sub_id]]))) {
-    stop("NA values found in subject ID column.")
-  }
-
-  if (any(is.na(data[[response]]))) {
-    stop("NA values found in response column.")
-  }
-
-  if (any(is.na(data[[rt]]))) {
-    stop("NA values found in RT column.")
-  }
-
-  # Validate RT values
-  if (any(data[[rt]] <= 0)) {
-    stop("All RT values must be positive")
-  }
+  if (any(is.na(data[[sub_id]]))) stop("NA values found in subject ID column.")
+  if (any(is.na(data[[response]]))) stop("NA values found in response column.")
+  if (any(is.na(data[[rt]]))) stop("NA values found in RT column.")
+  if (any(data[[rt]] <= 0)) stop("All RT values must be positive")
 
   # rtdists works in seconds. RTs averaging over 10 are assumed to be milliseconds.
   if (mean(data[[rt]]) > 10) {
@@ -146,19 +126,19 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   }
 
   # A parameter can either be fixed to one value or vary across conditions, not both
-  vary_args <- list(a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
+  vary_list <- list(a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
                     st0 = vary_st0, sz = vary_sz, sv = vary_sv)
-  fix_args <- c(a = fix_a, t0 = fix_t0, z = fix_z, v = fix_v,
-                st0 = fix_st0, sz = fix_sz, sv = fix_sv)
-  conflicting <- names(fix_args)[fix_args & lengths(vary_args) > 0]
+  fixed <- c(a = fix_a, t0 = fix_t0, z = fix_z, v = fix_v,
+             st0 = fix_st0, sz = fix_sz, sv = fix_sv)
+  conflicting <- names(fixed)[fixed & lengths(vary_list) > 0]
   if (length(conflicting) > 0) {
     stop("These parameters are both fixed and set to vary across conditions: ",
          paste(conflicting, collapse = ", "), ". Set fix_", conflicting[1],
          " = FALSE to estimate it per condition, or remove vary_", conflicting[1], ".")
   }
 
-  # Check that the condition columns exist and have no missing values
-  vary_cols <- unique(unlist(vary_args))
+  # The condition columns must exist and have no missing values
+  vary_cols <- unique(unlist(vary_list))
   missing_vary <- setdiff(vary_cols, names(data))
   if (length(missing_vary) > 0) {
     stop("The following vary_ columns were not found in data: ",
@@ -180,7 +160,6 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
                      precision = precision, stop_on_error = stop_on_error, max_retries = max_retries,
                      p_outlier = p_outlier, w_outlier = w_outlier)
 
-  # Validate parameter bounds
   if (a_fixed <= 0) stop("a_fixed must be positive")
   if (t0_fixed < 0) stop("t0_fixed cannot be negative")
   # z = 0 or 1 puts the starting point on a boundary, where every trial has likelihood 0
@@ -202,107 +181,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
          2 * min(z_fixed, 1 - z_fixed) * a_fixed, "), or starting points fall outside the boundaries")
   }
 
-  run_pre_checks <- function(data, sub_id, response, rt, vary_a, vary_t0, vary_z, vary_v,
-                             vary_st0, vary_sz, vary_sv, fix_st0, st0_fixed,
-                             fix_sz, sz_fixed) {
-
-    warnings_issued <- FALSE
-
-    # Parameter checks
-    if (fix_st0 && st0_fixed > 0.5) {
-      message("WARNING: st0_fixed seems large (", st0_fixed, "). This may cause estimation issues.")
-      warnings_issued <- TRUE
-    }
-
-    if (fix_sz && sz_fixed > 0.5) {
-      message("WARNING: sz_fixed seems large (", sz_fixed, "). This may cause estimation issues.")
-      warnings_issued <- TRUE
-    }
-
-    # FIXED: Check condition counts WITHIN participants
-    check_conditions <- unique(unlist(c(vary_a, vary_t0, vary_z, vary_v, vary_st0, vary_sz, vary_sv)))
-    check_conditions <- check_conditions[!is.na(check_conditions) & check_conditions != ""]
-
-    if (length(check_conditions) > 0) {
-      # Create condition column
-      data$temp_cond <- do.call(paste, c(data[check_conditions], sep = "_"))
-
-      # Count trials per participant per condition
-      participant_condition_counts <- data %>%
-        group_by(!!sym(sub_id), .data$temp_cond) %>%
-        summarise(trial_count = n(), .groups = 'drop')
-
-      # Find participant-condition combinations with low trial counts
-      low_trial_combos <- participant_condition_counts %>%
-        filter(.data$trial_count < 25)
-
-      if (nrow(low_trial_combos) > 0) {
-        message("WARNING: Some participant-condition combinations have very few trials (<25):")
-
-        # Group by condition and list affected participants
-        by_condition <- low_trial_combos %>%
-          group_by(.data$temp_cond) %>%
-          summarise(
-            participants = paste(!!sym(sub_id), " (n=", .data$trial_count, ")", sep = "", collapse = ", "),
-            .groups = 'drop'
-          )
-
-        for (i in seq_len(nrow(by_condition))) {
-          message("  Condition '", by_condition$temp_cond[i], "': ", by_condition$participants[i])
-        }
-
-        message("This may cause estimation problems.")
-        warnings_issued <- TRUE
-      }
-
-      # Remove temporary column
-      data$temp_cond <- NULL
-    }
-
-    # Participant checks (total trials per participant). Counted on the IDs as text so
-    # that unused levels of a factor ID column are not reported as participants with 0 trials.
-    participant_counts <- table(as.character(data[[sub_id]]))
-    small_participants <- participant_counts[participant_counts < 20]
-    if (length(small_participants) > 0) {
-      message("WARNING: Some participants have very few total trials (<20): ",
-              paste(names(small_participants), " (n=", small_participants, ")", sep = "", collapse = ", "),
-              ". This may cause estimation problems.")
-      warnings_issued <- TRUE
-    }
-
-    # Participants who only ever responded at one boundary: without any responses at the
-    # other boundary, boundary separation, drift rate and starting point are not well
-    # identified (the likelihood can keep increasing as a and v grow).
-    one_sided <- tapply(as.character(data[[response]]), as.character(data[[sub_id]]),
-                        function(x) length(unique(x)) < 2)
-    if (any(one_sided)) {
-      message("WARNING: Some participants gave all their responses at one boundary: ",
-              paste(names(one_sided)[one_sided], collapse = ", "),
-              ". Their estimates of a, v and z are unreliable.")
-      warnings_issued <- TRUE
-    }
-
-    # Very fast responses are usually anticipations. t0 cannot exceed the fastest RT it
-    # applies to, so a single such response can pull a participant's t0 estimate down.
-    fast <- table(as.character(data[[sub_id]])[data[[rt]] < 0.15])
-    if (length(fast) > 0) {
-      message("WARNING: Some participants have RTs below 0.15 s: ",
-              paste(names(fast), " (n=", fast, ")", sep = "", collapse = ", "),
-              ". t0 must be below a participant's fastest RT, so such responses can pull ",
-              "the t0 estimate down. Consider excluding them before fitting.")
-      warnings_issued <- TRUE
-    }
-
-    return(warnings_issued)
-  }
-
-  # Run the pre-checks
   cat("Running pre-fit checks...\n")
-  warnings_issued <- run_pre_checks(data, sub_id, response, rt, vary_a, vary_t0, vary_z, vary_v,
-                                    vary_st0, vary_sz, vary_sv, fix_st0, st0_fixed,
-                                    fix_sz, sz_fixed)
-
-  # Ask for confirmation
+  warnings_issued <- run_pre_checks(data, sub_id, response, rt, vary_list,
+                                    fix_st0, st0_fixed, fix_sz, sz_fixed)
   if (warnings_issued && ask && interactive()) {
     cat("\n")
     msg <- readline("Do you want to continue with model fitting? (y/n): ")
@@ -313,27 +194,15 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     cat("Continuing with model fitting...\n\n")
   }
 
-  # SECTION A: SETTING UP THE DATAFRAME
+  # ---- 2. Trial data in rtdists' format ----------------------------------------------------
 
-  # discern how many conditions there are that need to be considered when varying parameters
-  conditions <- unlist(c(vary_a, vary_t0, vary_z, vary_v, vary_st0, vary_sz, vary_sv))
+  # The condition columns any parameter varies across, and their levels
+  conditions <- unlist(vary_list)
   conditions <- unique(conditions[!is.na(conditions) & conditions != ""])
-
-  #create a list with sublists that hold the level names for each condition
   levels_list <- lapply(conditions, function(x) sort(unique(data[[x]])))
   names(levels_list) <- conditions
 
-  names(a_fixed) <- "a"
-  names(t0_fixed) <- "t0"
-  names(z_fixed) <- "z"
-  names(v_fixed) <- "v"
-  names(st0_fixed) <- "st0"
-  names(sz_fixed) <- "sz"
-  names(sv_fixed) <- "sv"
-
-  # create cond column that indicates which experimental cell a given trial came from
-  # then paste this to the dataset and rename dataset df.rtdists for all further operations
-  # rename and relevel responses to prep for ddiffusion later on
+  # The condition cell of each trial, labelled by its levels joined with "_"
   if (length(conditions) < 1) {
     cond <- rep("NA", nrow(data))
   } else {
@@ -344,59 +213,24 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     }
   }
 
-  #before next steps, save original column names for processed_data frame
-  S <- sub_id
-  R <- response
-  React <- rt
-
-  ID <- data[[sub_id]]
-  response <- data[[response]]
-  RT <- data[[rt]]
-
-  # Check if df.rtdists$response contains only 0 and 1 or upper lower
-  if (all(response %in% c(0, 1))) {
-    # Convert 0 to "lower" and 1 to "upper"
-    response <- ifelse(response == 1, "upper", "lower")
-  } else if (all(response %in% c("upper", "lower"))) {
-    response <- response
-  } else {
+  resp <- data[[response]]
+  if (all(resp %in% c(0, 1))) {
+    resp <- ifelse(resp == 1, "upper", "lower")
+  } else if (!all(resp %in% c("upper", "lower"))) {
     stop("Response variable must be coded as 0/1 or 'lower'/'upper'")
   }
-
-  df.rtdists = data.frame(ID, cond, response, RT)
+  trials <- data.frame(ID = data[[sub_id]], cond = cond, response = resp, RT = data[[rt]])
   # rtdists reads a factor response by its level number (1 = lower, 2 = upper), so both
   # levels must always exist, even when every response is at the same boundary
-  df.rtdists$response <- factor(df.rtdists$response, levels = c("lower", "upper"))
+  trials$response <- factor(trials$response, levels = c("lower", "upper"))
+  ids <- unique(trials$ID)
 
-  # RP List. Will be used to loop over RPs later on
-  RPlist <- unique(df.rtdists$ID)
-  #RPlist <- RPlist[RPlist != 77]
+  # ---- 3. The parameters and the trials each applies to ------------------------------------
 
-  # SECTION B: GENERATING THE CONDITION CELLS EACH PARAMETER IS ESTIMATED FOR
-
-  #order vary lists alphabetically
-  vary_a <- sort(vary_a)
-  vary_t0 <- sort(vary_t0)
-  vary_z <- sort(vary_z)
-  vary_v <- sort(vary_v)
-  vary_st0 <- sort(vary_st0)
-  vary_sz <- sort(vary_sz)
-  vary_sv <- sort(vary_sv)
-  vary_list <- list(a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
-                    st0 = vary_st0, sz = vary_sz, sv = vary_sv)
-
-  # Function to generate all level combinations of the given condition columns, one row per
-  # combination. The first column varies slowest (neg_0.4, neg_0.45, ..., pos_0.4, ...).
-  generate_cells <- function(vary) {
-    grid <- expand.grid(rev(levels_list[vary]), KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
-    grid[vary]
-  }
-
-  # SECTION C: GENERATING STARTING PARAMETER LIST THAT WILL BE FED TO NLMINB
-
-  # For each parameter, generate one name per condition cell it is estimated for, and keep
-  # the cell's level values (param_cells) so trials can be matched to parameters by value.
-  # A parameter that doesn't vary across any conditions is simply given its name.
+  # Each parameter is estimated once per level combination of the condition columns it
+  # varies across ("v_easy", "v_hard", ...), or once if it varies across none ("a").
+  # param_cells keeps each parameter's level values, so trials are matched by value.
+  vary_list <- lapply(vary_list, sort)
   param_cells <- list()
   param_type <- c()
   for (par in names(vary_list)) {
@@ -404,7 +238,9 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
       param_cells[par] <- list(list())
       param_type[par] <- par
     } else {
-      grid <- generate_cells(vary_list[[par]])
+      # all level combinations, one row each; the first column varies slowest
+      grid <- expand.grid(rev(levels_list[vary_list[[par]]]), KEEP.OUT.ATTRS = FALSE,
+                          stringsAsFactors = FALSE)[vary_list[[par]]]
       cell_names <- paste0(par, "_", do.call(paste, c(grid, sep = "_")))
       for (r in seq_len(nrow(grid))) {
         param_cells[[cell_names[r]]] <- as.list(grid[r, , drop = FALSE])
@@ -417,585 +253,93 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
          "the same parameter name. Please recode these levels without '_'.")
   }
 
-  names_a <- names(param_type)[param_type == "a"]
-  names_t0 <- names(param_type)[param_type == "t0"]
-  names_z <- names(param_type)[param_type == "z"]
-  names_v <- names(param_type)[param_type == "v"]
-  names_st0 <- names(param_type)[param_type == "st0"]
-  names_sz <- names(param_type)[param_type == "sz"]
-  names_sv <- names(param_type)[param_type == "sv"]
+  defaults <- c(a = a_fixed, t0 = t0_fixed, z = z_fixed, v = v_fixed,
+                st0 = st0_fixed, sz = sz_fixed, sv = sv_fixed)
+  col_names <- names(param_type)                         # every parameter, fixed or not
+  param_names <- col_names[!fixed[param_type]]           # the estimated parameters
+  par_types <- unname(param_type[param_names])
+  # default starting values, used where a participant's data give no starting guess
+  start <- setNames(defaults[par_types], param_names)
+  fixed_par_vals <- defaults[fixed]
 
-  # determine how many times a parameter will be estimated
-  length_a <- length(names_a)
-  length_t0 <- length(names_t0)
-  length_z <- length(names_z)
-  length_v <- length(names_v)
-  length_st0 <- length(names_st0)
-  length_sz <- length(names_sz)
-  length_sv <- length(names_sv)
-
-  # create lists for each parameter, which contain the parameters starting value n times—n being the number of times it will be estimated
-  start_a <- rep(a_fixed, length_a)
-  start_t0 <- rep(t0_fixed, length_t0)
-  start_z <- rep(z_fixed, length_z)
-  start_v <- rep(v_fixed, length_v)
-  start_st0 <- rep(st0_fixed, length_st0)
-  start_sz <- rep(sz_fixed, length_sz)
-  start_sv <- rep(sv_fixed, length_sv)
-
-  # Initialize starting parameter list that will be fed into ddiffusion function
-  start <- c(start_a, start_t0, start_z, start_v, start_st0, start_sz, start_sv)
-  names(start) <- c(names_a, names_t0, names_z, names_v, names_st0, names_sz, names_sv)
-  param_names <- c(names_a, names_t0, names_z, names_v, names_st0, names_sz, names_sv)
-  col_names <- param_names
-
-  # SECTION D: DEALING WITH FIXED PARAMETERS
-
-  # check whether a parameter is fixed. If it is, remove it from the starting parameter list
-  # Also, create new set of variables "n_fixed", which are either equal to the fixed parameter value or NULL, if parameter is not fixed
-  if (fix_a) {
-    start <- start[!names(start) %in% "a"]
-    param_names <- param_names[!param_names %in% "a"]
-  } else {
-    a_fixed <- NULL
-  }
-
-  if (fix_t0 == TRUE) {
-    start <- start[!names(start) %in% "t0"]
-    param_names <- param_names[!param_names %in% "t0"]
-  } else {
-    t0_fixed <- NULL
-  }
-
-  if (fix_z == TRUE) {
-    start <- start[!names(start) %in% "z"]
-    param_names <- param_names[!param_names %in% "z"]
-  } else {
-    z_fixed <- NULL
-  }
-
-  if (fix_v == TRUE) {
-    start <- start[!names(start) %in% "v"]
-    param_names <- param_names[!param_names %in% "v"]
-  } else {
-    v_fixed <- NULL
-  }
-
-  if (fix_st0 == TRUE) {
-    start <- start[!names(start) %in% "st0"]
-    param_names <- param_names[!param_names %in% "st0"]
-  } else {
-    st0_fixed <- NULL
-  }
-
-  if (fix_sz == TRUE) {
-    start <- start[!names(start) %in% "sz"]
-    param_names <- param_names[!param_names %in% "sz"]
-  } else {
-    sz_fixed <- NULL
-  }
-
-  if (fix_sv == TRUE) {
-    start <- start[!names(start) %in% "sv"]
-    param_names <- param_names[!param_names %in% "sv"]
-  } else {
-    sv_fixed <- NULL
-  }
-
-  # list with fixed parameter values that will be used for naming fixed parameter columns later on
-  fixed_par_vals <- c(a_fixed, t0_fixed, z_fixed, v_fixed, st0_fixed, sz_fixed, sv_fixed)
-
-  # SECTION E: GENERATING TRACKING COLUMNS FOR ALL THE STARTING PARAMETERS
-  # EACH STARTING PARAMETER GETS A COLUMN IN THE DATASET THAT EQUALS "TRUE", IF THE STARTING PARAMETER APPLIES FOR THAT TRIAL
-
-  split_pars <- function(string) unlist(strsplit(string, "_"))
-  list_with_split_pars <- lapply(param_names, split_pars)
-
-  # A trial belongs to a parameter if its value in every condition column the parameter
-  # varies across equals the parameter's level (always TRUE for non-varying parameters)
-  tracking_cols <- lapply(param_names, function(par_name) {
+  # For each estimated parameter, the trials it applies to: those whose value in every
+  # condition column the parameter varies across equals the parameter's level
+  applies <- lapply(param_names, function(par_name) {
     cell <- param_cells[[par_name]]
-    contains_condition <- rep(TRUE, nrow(data))
+    in_cell <- rep(TRUE, nrow(data))
     for (column in names(cell)) {
-      contains_condition <- contains_condition & data[[column]] == cell[[column]]
+      in_cell <- in_cell & data[[column]] == cell[[column]]
     }
-    name_i <- paste0("contains_condition_", par_name)
-    tibble::as_tibble(setNames(list(contains_condition), name_i))
+    in_cell
   })
+  names(applies) <- param_names
 
-  df.rtdists <- bind_cols(df.rtdists, tracking_cols)
-
-  # Record which estimated parameter applies in each condition cell (NA if the parameter
-  # is fixed). predict() and simulate() use this for each cell.
+  # Which estimated parameter applies in each condition cell (NA if the parameter is
+  # fixed). predict() and simulate() use this for each cell.
   cells <- unique(cond)
   first_trial <- match(cells, cond)
   cell_parameters <- data.frame(.cell = cells)
   for (par in names(vary_list)) {
-    candidates <- param_names[param_type[param_names] == par]
+    candidates <- param_names[par_types == par]
     cell_parameters[[par]] <- vapply(first_trial, function(trial) {
-      applies <- vapply(candidates, function(name) {
-        df.rtdists[[paste0("contains_condition_", name)]][trial]
-      }, logical(1))
-      if (any(applies)) candidates[applies][1] else NA_character_
+      hit <- vapply(candidates, function(name) applies[[name]][trial], logical(1))
+      if (any(hit)) candidates[hit][1] else NA_character_
     }, character(1))
   }
 
-  # SECTION F: CREATING THE WRAPPER FUNCTION FOR RTDISTS
+  # Optimizer bounds. t0's upper bound is set per participant (see fit_participant()).
+  lower_bounds <- c(a = 0.01, t0 = 0, z = 0, v = -Inf, st0 = 0, sz = 0, sv = 0)[par_types]
+  upper_bounds <- c(a = Inf, t0 = Inf, z = 1, v = Inf, st0 = Inf, sz = 1, sv = Inf)[par_types]
 
-  # Define wrapper calling rtdists. Wrapper will be given to optim to minimize
-  # SECTION F: CREATING THE WRAPPER FUNCTION FOR RTDISTS
-  ll_fun <- function(pars, RT, response,
-                     a_start_val, t0_start_val, z_start_val, v_start_val, st0_start_val, sz_start_val, sv_start_val,
-                     precision, stop_on_error,
-                     param_names, contains_conditions_list, list_with_split_pars,
-                     groups = NULL, p_outlier = 0, w_outlier = 0.1) {
+  # ---- 4. Fit each participant -------------------------------------------------------------
 
-    # Initialize base parameter vectors
-    a   <- a_start_val
-    t0  <- t0_start_val
-    z   <- z_start_val
-    v   <- v_start_val
-    st0 <- st0_start_val
-    sz  <- sz_start_val
-    sv  <- sv_start_val
-
-    # Apply condition-specific parameter updates
-    for (p in seq_along(list_with_split_pars)) {
-      parameter <- list_with_split_pars[[p]]
-      condition <- contains_conditions_list[[p]]
-      par_name  <- param_names[p]
-
-      if (parameter[1] == "a") {
-        a[condition] <- pars[par_name]
-      } else if (parameter[1] == "t0") {
-        t0[condition] <- pars[par_name]
-      } else if (parameter[1] == "z") {
-        z[condition] <- pars[par_name]
-      } else if (parameter[1] == "v") {
-        v[condition] <- pars[par_name]
-      } else if (parameter[1] == "st0") {
-        st0[condition] <- pars[par_name]
-      } else if (parameter[1] == "sz") {
-        sz[condition] <- pars[par_name]
-      } else if (parameter[1] == "sv") {
-        sv[condition] <- pars[par_name]
-      }
-    }
-
-    # Compute likelihoods. Trials in the same group share all parameter values, so
-    # ddiffusion is called once per group with scalar parameters. Passing trial-level
-    # parameter vectors instead gives the same densities, but rtdists then has to find
-    # the unique parameter combinations on every call, which dominates the fitting time.
-    if (is.null(groups)) groups <- list(seq_along(RT))
-    dens <- numeric(length(RT))
-    for (g in groups) {
-      k <- g[1]
-      at <- function(x) if (length(x) == 1) x else x[k]
-      dens[g] <- ddiffusion(
-        rt = RT[g], response = response[g],
-        a = at(a), v = at(v), t0 = at(t0), z = at(z) * at(a),
-        st0 = at(st0), sz = at(sz), sv = at(sv),
-        precision = precision, stop_on_error = stop_on_error
-      )
-    }
-
-    # Outlier mixture as in HDDM: each trial comes from the diffusion model with probability
-    # 1 - p_outlier, and otherwise from a uniform outlier distribution with density w_outlier
-    if (p_outlier > 0) {
-      dens[is.na(dens) | dens < 0] <- 0
-      dens <- (1 - p_outlier) * dens + p_outlier * w_outlier
-    }
-
-    # Handle invalid densities. A density of 0 usually means the true density is too
-    # small to represent (e.g. an RT just above t0), so it is replaced by the smallest
-    # positive double. A larger floor (this used to be 1e-10) caps the cost of a poorly
-    # fitted trial, and the optimizer can then improve the fit to the remaining trials
-    # by effectively discarding one.
-    if (any(is.na(dens) | dens <= 0)) {
-      dens[dens <= 0 | is.na(dens)] <- .Machine$double.xmin
-    }
-
-    # Return negative log-likelihood
-    return(-sum(log(dens)))
-  }
-
-  # SECTION G: SETTING UP THE OUTPUT TABLE FOR THE MODEL
-
-  # Initialize estimated parameters tables
-  Nparams <- length(start)
-  Nfixed <- length(fixed_par_vals)
-  paramEsts <- data.frame(matrix(NA, ncol=Nparams+Nfixed+5))
-  names(paramEsts) <- c("ID", names(start), names(fixed_par_vals), "converge", "LLE", "AIC", "BIC")
-  fit_info <- data.frame(ID = RPlist, optimizer_runs = NA_integer_,
+  n_par <- length(param_names)
+  paramEsts <- data.frame(matrix(NA, ncol = n_par + length(fixed_par_vals) + 5))
+  names(paramEsts) <- c("ID", param_names, names(fixed_par_vals), "converge", "LLE", "AIC", "BIC")
+  fit_info <- data.frame(ID = ids, optimizer_runs = NA_integer_,
                          converge = NA_integer_, best_replicated = NA, message = NA_character_,
                          se_status = NA_character_)
-  seEsts <- data.frame(matrix(NA_real_, nrow = length(RPlist), ncol = Nparams + 1))
-  names(seEsts) <- c("ID", names(start))
+  seEsts <- data.frame(matrix(NA_real_, nrow = length(ids), ncol = n_par + 1))
+  names(seEsts) <- c("ID", param_names)
   vcov_list <- list()
 
-  # SECTION H: FIT THE MODEL FOR EACH PARTICIPANT AND DUMP RESULTS INTO OUTPUT TABLE
+  settings_fit <- list(fixed = fixed, defaults = defaults, param_names = param_names,
+                       par_types = par_types, start = start, lower = unname(lower_bounds),
+                       upper = unname(upper_bounds), precision = precision,
+                       stop_on_error = stop_on_error, p_outlier = p_outlier, w_outlier = w_outlier,
+                       max_retries = max_retries, compute_se = compute_se,
+                       print_starting_vals = print_starting_vals)
 
-  # Create bounds that match the actual parameters being optimized
-  lower_bounds <- c()
-  upper_bounds <- c()
+  cat("Fitting diffusion model for", length(ids), "participants...\n")
+  pb <- txtProgressBar(min = 0, max = length(ids), style = 3)
 
-  if (!fix_a && length_a > 0) {
-    lower_bounds <- c(lower_bounds, rep(0.01, length_a))
-    upper_bounds <- c(upper_bounds, rep(Inf, length_a))
+  for (k in seq_along(ids)) {
+    # (as a for loop over the IDs would give them: factor IDs as their labels)
+    i <- if (is.factor(ids)) as.character(ids[k]) else ids[k]
+    rows <- which(trials$ID == i)
+    res <- fit_participant(trials[rows, , drop = FALSE], i,
+                           lapply(applies, `[`, rows), settings_fit)
+    fit <- res$fit
+
+    seEsts[k, "ID"] <- i
+    seEsts[k, res$fit_names] <- res$se
+    vcov_list[as.character(i)] <- list(res$vcov)
+    fit_info[k, ] <- list(i, res$n_runs, fit$convergence, res$replicated, fit$message, res$se_status)
+
+    paramEsts[k, "ID"] <- i
+    for (est in param_names) paramEsts[k, est] <- fit$par[est]
+    for (fixed_par in names(fixed_par_vals)) paramEsts[k, fixed_par] <- fixed_par_vals[fixed_par]
+    paramEsts[k, "converge"] <- fit$convergence
+    paramEsts[k, "LLE"] <- -fit$objective
+    paramEsts[k, "AIC"] <- 2 * length(fit$par) + 2 * fit$objective
+    paramEsts[k, "BIC"] <- 2 * fit$objective + length(fit$par) * log(length(rows))
+
+    setTxtProgressBar(pb, k)
   }
-  if (!fix_t0 && length_t0 > 0) {
-    lower_bounds <- c(lower_bounds, rep(0, length_t0))
-    upper_bounds <- c(upper_bounds, rep(Inf, length_t0))
-  }
-  if (!fix_z && length_z > 0) {
-    lower_bounds <- c(lower_bounds, rep(0, length_z))
-    upper_bounds <- c(upper_bounds, rep(1, length_z))
-  }
-  if (!fix_v && length_v > 0) {
-    lower_bounds <- c(lower_bounds, rep(-Inf, length_v))
-    upper_bounds <- c(upper_bounds, rep(Inf, length_v))
-  }
-  if (!fix_st0 && length_st0 > 0) {
-    lower_bounds <- c(lower_bounds, rep(0, length_st0))
-    upper_bounds <- c(upper_bounds, rep(Inf, length_st0))
-  }
-  if (!fix_sz && length_sz > 0) {
-    lower_bounds <- c(lower_bounds, rep(0, length_sz))
-    upper_bounds <- c(upper_bounds, rep(1, length_sz))
-  }
-  if (!fix_sv && length_sv > 0) {
-    lower_bounds <- c(lower_bounds, rep(0, length_sv))
-    upper_bounds <- c(upper_bounds, rep(Inf, length_sv))
-  }
-
-  # starting message
-  cat("Fitting diffusion model for", length(RPlist), "participants...\n")
-  pb <- txtProgressBar(min = 0, max = length(RPlist), style = 3)
-
-  ## Run model across all RPs
-  loopCount <-  1
-  # Run model
-  for (i in RPlist) {
-
-    # read in one participant
-    data.to.model <- df.rtdists %>% filter(.data$ID==i)
-
-    # turn the tracking columns into vectors and put them in a list that can be given to the rtdists wrapper
-    target_columns <- grep("^contains_condition_", names(data.to.model), value = TRUE)
-    contains_conditions_list <- data.to.model %>%
-      dplyr::select(all_of(target_columns)) %>%
-      dplyr::mutate(across(everything(), as.vector)) %>%
-      dplyr::summarise(across(everything(), list)) %>%
-      unlist(recursive = FALSE)
-
-    # prepare starting parameters for rtdists function
-    ### --- Compute condition-specific starting values (using "upper"/"lower" responses) --- ###
-
-    # ---------- 1) RT units: already converted to seconds during the pre-checks ----------
-    data.to.model$RT_sec <- data.to.model$RT
-
-    # ---------- 2) Recode responses: "upper" -> +1, "lower" -> -1 ----------
-    data.to.model$resp_num <- dplyr::case_when(
-      data.to.model$response == "upper" ~  1,
-      data.to.model$response == "lower" ~ -1,
-      TRUE ~ NA_real_
-    )
-
-    # ---------- 3) Per-condition summaries ----------
-    cond_summaries <- data.to.model %>%
-      dplyr::group_by(.data$cond) %>%
-      dplyr::summarise(
-        n_trials = n(),
-        meanRT = mean(.data$RT_sec, na.rm = TRUE),
-        varRT  = stats::var(.data$RT_sec, na.rm = TRUE),
-        minRT  = t0_cap(.data$RT_sec, p_outlier),
-        q10RT  = quantile(.data$RT_sec, probs = 0.1, na.rm = TRUE, names = FALSE),
-        prop_upper = mean(.data$response == "upper", na.rm = TRUE),
-        .groups = "drop"
-      )
-
-    # ---------- 4) Starting guesses from EZ-diffusion ----------
-    # EZ (Wagenmakers et al., 2007) gives closed-form estimates of v, a and t0 per condition
-    # cell. t0 is kept below the fastest RT (the 10% quantile with an outlier component) so
-    # every trial has a non-zero likelihood at the start. z starts unbiased, and the
-    # variability parameters at small values.
-    ez <- ez_diffusion(cond_summaries$prop_upper, cond_summaries$meanRT,
-                       cond_summaries$varRT, cond_summaries$n_trials)
-    cond_summaries <- cond_summaries %>%
-      dplyr::mutate(
-        v_guess = pmin(pmax(ez$v, -5), 5),
-        a_guess = pmin(pmax(ez$a, 0.3), 5),
-        t0_guess = pmin(ez$t0, 0.9 * .data$minRT),
-        z_guess = 0.5,
-        st0_guess = 0.1,
-        sz_guess = 0.1,
-        sv_guess = 0.1
-      )
-
-    # ---------- 5) Fallback starts where EZ is undefined or implausible ----------
-    cond_summaries <- cond_summaries %>%
-      dplyr::mutate(
-        v_guess = ifelse(is.na(.data$v_guess), 0.5 * sign(.data$prop_upper - 0.5 + 1e-6), .data$v_guess),
-        a_guess = ifelse(is.na(.data$a_guess), 1.0, .data$a_guess),
-        # a non-positive EZ t0 (e.g. strongly skewed RTs) falls back to the fast-RT floor
-        t0_guess = ifelse(is.na(.data$t0_guess) | .data$t0_guess <= 0,
-                          pmin(.data$q10RT, 0.9 * .data$minRT), .data$t0_guess)
-      )
-
-    # ---------- 6) Join back to trials and create trial-level start vectors ----------
-    data.to.model <- data.to.model %>%
-      dplyr::left_join(cond_summaries, by = "cond")
-
-    # --- Replicate across trials and respect any fixed flags ---
-    a_start_val  <- if (fix_a)  a_fixed else data.to.model$a_guess
-    v_start_val  <- if (fix_v)  v_fixed else data.to.model$v_guess
-    t0_start_val <- if (fix_t0) t0_fixed else data.to.model$t0_guess
-    z_start_val  <- if (fix_z)  z_fixed else data.to.model$z_guess
-    st0_start_val <- if (fix_st0) st0_fixed else data.to.model$st0_guess
-    sz_start_val  <- if (fix_sz)  sz_fixed else data.to.model$sz_guess
-    sv_start_val  <- if (fix_sv)  sv_fixed else data.to.model$sv_guess
-
-    # ---------- 7) Build the optimizer's starting vector and bounds ----------
-    # Each estimated parameter applies to the trials flagged in its tracking column.
-    # Its start is the mean guess over those trials (the minimum for t0, which must
-    # stay below every RT it applies to). Falls back to the default start if no
-    # usable guess exists, and is kept inside the optimizer bounds.
-    # t0 is the earliest possible response, so any trial faster than t0 has zero
-    # likelihood. Its upper bound is therefore set just below the fastest RT it
-    # applies to; otherwise the optimizer can get stuck at a t0 that writes off
-    # the fastest trials.
-    start_i <- start
-    upper_i <- upper_bounds
-    for (p in seq_along(param_names)) {
-      par_name <- param_names[p]
-      par_type <- list_with_split_pars[[p]][1]
-      trials <- contains_conditions_list[[p]]
-      if (par_type == "t0" && any(trials)) {
-        upper_i[p] <- 0.999 * t0_cap(data.to.model$RT[trials], p_outlier)
-      }
-      guesses <- data.to.model[[paste0(par_type, "_guess")]][trials]
-      guesses <- guesses[is.finite(guesses)]
-      if (length(guesses) > 0) {
-        start_i[par_name] <- if (par_type == "t0") min(guesses) else mean(guesses)
-      }
-    }
-    start_i <- pmin(pmax(start_i, lower_bounds), upper_i)
-
-    # A parameter that applies to no trials of this participant (e.g. a condition the
-    # participant has no data for) cannot be estimated. It is left out of this
-    # participant's fit and reported as NA, so it neither stays at its starting value nor
-    # makes the Hessian singular for the other parameters.
-    estimable <- vapply(contains_conditions_list, any, logical(1))
-    fit_names <- param_names[estimable]
-    fit_splits <- list_with_split_pars[estimable]
-    fit_conditions <- contains_conditions_list[estimable]
-    lower_i <- lower_bounds[estimable]
-    upper_i <- upper_i[estimable]
-    start_i <- start_i[estimable]
-
-    ### --- Diagnostic: Print starting values per condition --- ###
-
-    if (print_starting_vals == TRUE) {
-      cat("\n======================================\n")
-      cat(paste0("Participant ", i, " -- Summary:\n"))
-      cat("======================================\n")
-      print(cond_summaries)
-      cat("\nStarting values passed to the optimizer:\n")
-      print(round(start_i, 3))
-      cat("======================================\n\n")
-    }
-
-    # Trials that share all parameter values (same condition cell and the same tracking
-    # pattern), so the likelihood can be computed once per group
-    trial_groups <- unname(split(seq_len(nrow(data.to.model)), interaction(
-      data.to.model$cond, do.call(paste0, lapply(fit_conditions, as.integer)),
-      drop = TRUE)))
-
-    # fit the model from a given starting vector
-    run_fit <- function(start_vals) {
-      nlminb(start_vals, objective = ll_fun,
-             RT = data.to.model[["RT"]], response = data.to.model[["response"]],
-             a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
-             precision = precision, stop_on_error = stop_on_error,
-             param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
-             groups = trial_groups, p_outlier = p_outlier, w_outlier = w_outlier,
-             control = list(iter.max = 10000, eval.max = 10000),
-             lower = lower_i,
-             upper = upper_i)
-    }
-
-    # Alternative starting vector number k (k >= 1), spread over the plausible parameter
-    # space with a Halton sequence (one prime base per parameter type, so all conditions of
-    # a parameter move together and the EZ pattern across conditions is kept). a and v are
-    # scaled by 0.5-2 times their EZ start; the others cover their usual range. Deterministic,
-    # so results are reproducible and the user's random seed is untouched.
-    par_types <- vapply(fit_splits, `[`, character(1), 1)
-    alternative_start <- function(k) {
-      s <- start_i
-      primes <- c(a = 2, t0 = 3, z = 5, v = 7, st0 = 11, sz = 13, sv = 17)
-      for (p in seq_along(fit_names)) {
-        type <- par_types[p]
-        u <- halton(k, primes[[type]])
-        s[p] <- switch(type,
-          a   = start_i[p] * 2^(2 * u - 1),
-          v   = start_i[p] * 2^(2 * u - 1),
-          t0  = upper_i[p] * (0.2 + 0.75 * u),
-          z   = 0.3 + 0.4 * u,
-          st0 = 0.3 * u,
-          sv  = 2.5 * u,
-          sz  = {
-            # sz must stay below 2 * min(z, a - z) on the absolute scale to be valid
-            a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
-            z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
-            0.9 * u * 2 * min(z_mean, 1 - z_mean) * a_mean
-          })
-      }
-      pmin(pmax(s, lower_i), upper_i)
-    }
-
-    # Starting vector that moves sv and sz estimates stuck at 0 to clearly positive values.
-    # sv and sz spread drift and starting point symmetrically, so near 0 they change the
-    # likelihood only quadratically: its slope at exactly 0 is zero, and the optimizer can
-    # report convergence there even when a positive value fits better.
-    nudged_start <- function(pars) {
-      s <- pars
-      s[par_types == "sv" & s <= 1e-3] <- 1
-      if (any(par_types == "sz" & s <= 1e-3)) {
-        a_mean <- if (any(par_types == "a")) mean(s[par_types == "a"]) else a_fixed
-        z_mean <- if (any(par_types == "z")) mean(s[par_types == "z"]) else z_fixed
-        s[par_types == "sz" & s <= 1e-3] <- 0.5 * 2 * min(z_mean, 1 - z_mean) * a_mean
-      }
-      pmin(pmax(s, lower_i), upper_i)
-    }
-    stuck_at_zero <- function(f) any(par_types %in% c("sv", "sz") & f$par <= 1e-3)
-
-    fit <- run_fit(start_i)
-    n_runs <- 1
-    replicated <- NA
-
-    # Retry (up to max_retries further optimizer runs) if the fit did not converge or an sv
-    # or sz estimate is at 0 (below 0.001; how close the optimizer gets to exactly 0 differs
-    # between platforms):
-    # 1) if it did not converge, restart the optimizer from where it stopped, which often
-    #    completes a fit that stopped early;
-    # 2) fit from further starting points (first with sv/sz stuck at 0 moved to positive
-    #    values, then alternative starting values) until the best converged solution has
-    #    been reached from two independent starting points, which indicates it is the
-    #    global optimum rather than a local one.
-    # The fit with the highest likelihood is kept.
-    if ((fit$convergence != 0 || stuck_at_zero(fit)) && max_retries > 0) {
-      if (fit$convergence != 0) {
-        restarted <- run_fit(fit$par)
-        n_runs <- n_runs + 1
-        if (restarted$objective <= fit$objective) fit <- restarted
-      }
-
-      start_optima <- fit$objective           # best solution from each independent start
-      start_converged <- fit$convergence == 0
-      replicated <- FALSE
-      tried_nudge <- FALSE
-      k <- 0
-      while (n_runs <= max_retries && !replicated) {
-        if (!tried_nudge && stuck_at_zero(fit)) {
-          next_start <- nudged_start(fit$par)
-          tried_nudge <- TRUE
-        } else {
-          k <- k + 1
-          next_start <- alternative_start(k)
-        }
-        candidate <- run_fit(next_start)
-        n_runs <- n_runs + 1
-        start_optima <- c(start_optima, candidate$objective)
-        start_converged <- c(start_converged, candidate$convergence == 0)
-        if (candidate$objective < fit$objective) fit <- candidate
-        replicated <- fit$convergence == 0 &&
-          sum(start_converged & abs(start_optima - fit$objective) < 0.01) >= 2
-      }
-    }
-
-    # ---------- Standard errors ----------
-    # SEs are the square roots of the diagonal of the inverse Hessian of the negative
-    # log-likelihood at the estimates (the observed Fisher information), computed numerically
-    # with Richardson extrapolation (numDeriv). The Hessian is evaluated with at least
-    # precision 4, because the less precise numerical integration at precision 3 noticeably
-    # distorts the second derivatives when sv or sz are estimated.
-    # Wald SEs require the estimate to lie inside its bounds. Parameters at (within 0.001 of)
-    # a bound, e.g. sv = 0 or t0 at the fastest RT, get no SE, and the SEs of the other
-    # parameters are computed with them held at their estimates.
-    se <- setNames(rep(NA_real_, length(fit_names)), fit_names)
-    vcov_i <- NULL
-    se_status <- "not computed"
-    if (compute_se) {
-      at_bound <- (fit$par - lower_i < 1e-3) | (upper_i - fit$par < 1e-3)
-      free <- which(!at_bound)
-      bound_note <- if (any(at_bound)) {
-        paste0("no SE at bound: ", paste(fit_names[at_bound], collapse = ", "))
-      } else NULL
-      se_status <- if (is.null(bound_note)) "ok" else bound_note
-      if (length(free) > 0) {
-        nll_free <- function(x) {
-          p <- fit$par
-          p[free] <- x
-          ll_fun(p, RT = data.to.model[["RT"]], response = data.to.model[["response"]],
-                 a_start_val = a_start_val, t0_start_val = t0_start_val, z_start_val = z_start_val, v_start_val = v_start_val, st0_start_val = st0_start_val, sz_start_val = sz_start_val, sv_start_val = sv_start_val,
-                 precision = max(precision, 4), stop_on_error = stop_on_error,
-                 param_names = fit_names, contains_conditions_list = fit_conditions, list_with_split_pars = fit_splits,
-                 groups = trial_groups, p_outlier = p_outlier, w_outlier = w_outlier)
-        }
-        # numDeriv's largest step is d * |x| (d = 0.1 by default). A step past a bound, e.g.
-        # t0 beyond the fastest RT, gives trials a likelihood of 0 and a meaningless Hessian,
-        # so d is reduced to keep every step at most halfway to the nearest bound.
-        x_free <- fit$par[free]
-        gap <- pmin(x_free - lower_i[free], upper_i[free] - x_free)
-        rel_gap <- gap / pmax(abs(x_free), 1e-4)
-        step_d <- min(0.1, 0.5 * min(rel_gap))
-        H <- tryCatch(numDeriv::hessian(nll_free, x_free, method.args = list(d = step_d)),
-                      error = function(e) NULL)
-        if (is.null(H) || any(!is.finite(H))) {
-          se_status <- paste(c("Hessian could not be computed", bound_note), collapse = "; ")
-        } else {
-          H <- (H + t(H)) / 2
-          if (min(eigen(H, symmetric = TRUE, only.values = TRUE)$values) <= 0) {
-            # not a proper maximum (or a parameter is not identified): no valid SEs
-            se_status <- paste(c("Hessian not positive definite", bound_note), collapse = "; ")
-          } else {
-            vcov_i <- solve(H)
-            dimnames(vcov_i) <- list(fit_names[free], fit_names[free])
-            se[free] <- sqrt(diag(vcov_i))
-          }
-        }
-      }
-    }
-    seEsts[loopCount, "ID"] <- i
-    seEsts[loopCount, fit_names] <- se
-    vcov_list[as.character(i)] <- list(vcov_i)
-
-    fit_info[loopCount, ] <- list(i, n_runs, fit$convergence, replicated, fit$message, se_status)
-
-    # save to empirical_ests
-    parms <- fit$par
-    paramEsts[loopCount,"ID"] <- i
-    for (Est in param_names) {
-      paramEsts[loopCount, Est] <- parms[Est]
-    }
-    for (fixed in names(fixed_par_vals)) {
-      paramEsts[loopCount, fixed] <- fixed_par_vals[fixed]
-    }
-    paramEsts[loopCount,"converge"] <- fit$convergence
-    paramEsts[loopCount,"LLE"] <- -1*fit$objective  #LLE
-    paramEsts[loopCount,"AIC"] <- length(fit$par)*2-2*(-1*fit$objective)
-    paramEsts[loopCount,"BIC"] <- -2*(-1*fit$objective) + length(fit$par)*log(nrow(data.to.model))
-
-    #print(loopCount)
-    loopCount = loopCount+1
-    setTxtProgressBar(pb, i)
-  }
-
   close(pb)
 
-  # SECTION I: ORGANIZE OUTPUT TABLE AND CREATE SUMMARY TABLE
+  # ---- 5. Collect the results --------------------------------------------------------------
 
-  # Report participants that needed retries or still did not converge
   n_retried <- sum(fit_info$optimizer_runs > 1)
   n_failed <- sum(fit_info$converge != 0)
   if (n_retried > 0) {
@@ -1006,20 +350,15 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   seEsts$ID <- fit_info[[sub_id]]
   names(seEsts)[names(seEsts) == "ID"] <- sub_id
 
-  # Reorder the columns and rename subject ID if it was specified as custom
-  desired_order <- c("ID", col_names, "converge", "LLE", "AIC", "BIC")
-  paramEsts <- paramEsts[, desired_order]
+  paramEsts <- paramEsts[, c("ID", col_names, "converge", "LLE", "AIC", "BIC")]
   names(paramEsts)[names(paramEsts) == "ID"] <- sub_id
 
   # Mean and SD across participants of each parameter (fit statistics such as the
   # log-likelihood are reported per participant, not averaged)
-  means <- round(colMeans(paramEsts[, col_names, drop = FALSE], na.rm = TRUE), digits = 2)
-  sd <- round(apply(paramEsts[, col_names, drop = FALSE], 2, sd, na.rm = TRUE), digits = 2)
-  # summary table
   summary <- data.frame(
     Parameter = col_names,
-    Mean = means,
-    SD = sd,
+    Mean = round(colMeans(paramEsts[, col_names, drop = FALSE], na.rm = TRUE), digits = 2),
+    SD = round(apply(paramEsts[, col_names, drop = FALSE], 2, sd, na.rm = TRUE), digits = 2),
     Fixed = !(col_names %in% param_names)
   )
   table <- summary %>%
@@ -1028,13 +367,10 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
     fmt_number(columns = c("Mean", "SD"), decimals = 2)
   print(table)
 
-  # Store the processed data (in seconds) with the original condition columns, used by
+  # The processed data (in seconds) with the original condition columns, used by
   # predict() and simulate()
-  processed_data <- df.rtdists[, 1:4]
-  names(processed_data)[names(processed_data) == "ID"] <- S
-  names(processed_data)[names(processed_data) == "response"] <- R
-  names(processed_data)[names(processed_data) == "RT"] <- React
-  names(processed_data)[names(processed_data) == "cond"] <- ".cell"
+  processed_data <- trials
+  names(processed_data) <- c(sub_id, ".cell", response, rt)
   processed_data <- cbind(processed_data, data[conditions])
 
   # One row per parameter column: its type, whether it is fixed, and the condition values it
@@ -1056,24 +392,18 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
 
   results <- list(
     individual_estimates = paramEsts,
-    summary = summary,  # Your summary table
+    summary = summary,
     settings = list(
-      varying_parameters = list(
-        a = vary_a, t0 = vary_t0, z = vary_z, v = vary_v,
-        st0 = vary_st0, sz = vary_sz, sv = vary_sv
-      ),
-      fixed_parameters = list(
-        a = fix_a, t0 = fix_t0, z = fix_z, v = fix_v,
-        st0 = fix_st0, sz = fix_sz, sv = fix_sv
-      ),
-      n_participants = length(RPlist),
-      n_conditions = length(unique(df.rtdists$cond)),
+      varying_parameters = vary_list,
+      fixed_parameters = as.list(fixed),
+      n_participants = length(ids),
+      n_conditions = length(unique(cond)),
       cell_parameters = cell_parameters,
       cells = cells_table,
       parameters = parameter_info,
       model = model_spec,
       condition_columns = conditions,
-      columns = list(sub_id = S, response = R, rt = React),
+      columns = list(sub_id = sub_id, response = response, rt = rt),
       precision = precision,
       p_outlier = p_outlier,
       w_outlier = w_outlier
@@ -1086,6 +416,386 @@ driftd <- function(data, sub_id = "sub_id", response = "response", rt = "rt",
   )
 
   class(results) <- "driftd_results"
-  return(results)
+  results
+}
 
+
+
+
+# ---- Internal helpers ---------------------------------------------------------------------
+
+# Data-quality checks before fitting. Prints a warning for each problem found and returns
+# TRUE if any were found.
+#' @noRd
+run_pre_checks <- function(data, sub_id, response, rt, vary_list, fix_st0, st0_fixed,
+                           fix_sz, sz_fixed) {
+  warnings_issued <- FALSE
+
+  if (fix_st0 && st0_fixed > 0.5) {
+    message("WARNING: st0_fixed seems large (", st0_fixed, "). This may cause estimation issues.")
+    warnings_issued <- TRUE
+  }
+  if (fix_sz && sz_fixed > 0.5) {
+    message("WARNING: sz_fixed seems large (", sz_fixed, "). This may cause estimation issues.")
+    warnings_issued <- TRUE
+  }
+
+  # Trials per participant and condition cell
+  check_conditions <- unique(unlist(vary_list))
+  check_conditions <- check_conditions[!is.na(check_conditions) & check_conditions != ""]
+  if (length(check_conditions) > 0) {
+    data$temp_cond <- do.call(paste, c(data[check_conditions], sep = "_"))
+    low_trial_combos <- data %>%
+      group_by(!!sym(sub_id), .data$temp_cond) %>%
+      summarise(trial_count = n(), .groups = "drop") %>%
+      filter(.data$trial_count < 25)
+
+    if (nrow(low_trial_combos) > 0) {
+      message("WARNING: Some participant-condition combinations have very few trials (<25):")
+      by_condition <- low_trial_combos %>%
+        group_by(.data$temp_cond) %>%
+        summarise(
+          participants = paste(!!sym(sub_id), " (n=", .data$trial_count, ")", sep = "", collapse = ", "),
+          .groups = "drop"
+        )
+      for (i in seq_len(nrow(by_condition))) {
+        message("  Condition '", by_condition$temp_cond[i], "': ", by_condition$participants[i])
+      }
+      message("This may cause estimation problems.")
+      warnings_issued <- TRUE
+    }
+  }
+
+  participant_counts <- table(as.character(data[[sub_id]]))
+  small_participants <- participant_counts[participant_counts < 20]
+  if (length(small_participants) > 0) {
+    message("WARNING: Some participants have very few total trials (<20): ",
+            paste(names(small_participants), " (n=", small_participants, ")", sep = "", collapse = ", "),
+            ". This may cause estimation problems.")
+    warnings_issued <- TRUE
+  }
+
+  # Participants who only ever responded at one boundary: without any responses at the
+  # other boundary, boundary separation, drift rate and starting point are not well
+  # identified (the likelihood can keep increasing as a and v grow).
+  one_sided <- tapply(as.character(data[[response]]), as.character(data[[sub_id]]),
+                      function(x) length(unique(x)) < 2)
+  if (any(one_sided)) {
+    message("WARNING: Some participants gave all their responses at one boundary: ",
+            paste(names(one_sided)[one_sided], collapse = ", "),
+            ". Their estimates of a, v and z are unreliable.")
+    warnings_issued <- TRUE
+  }
+
+  # Very fast responses are usually anticipations. t0 cannot exceed the fastest RT it
+  # applies to, so a single such response can pull a participant's t0 estimate down.
+  fast <- table(as.character(data[[sub_id]])[data[[rt]] < 0.15])
+  if (length(fast) > 0) {
+    message("WARNING: Some participants have RTs below 0.15 s: ",
+            paste(names(fast), " (n=", fast, ")", sep = "", collapse = ", "),
+            ". t0 must be below a participant's fastest RT, so such responses can pull ",
+            "the t0 estimate down. Consider excluding them before fitting.")
+    warnings_issued <- TRUE
+  }
+
+  warnings_issued
+}
+
+# Negative log-likelihood of one participant's trials. `base` holds, per parameter type,
+# its value for every trial (a single value for fixed parameters); each estimated
+# parameter in `pars` then replaces the values of the trials it applies to (`applies`).
+# Trials in the same group share all parameter values, so ddiffusion is called once per
+# group with scalar parameters. (Passing trial-level parameter vectors gives the same
+# densities, but rtdists then has to find the unique parameter combinations on every
+# call, which dominates the fitting time.)
+#' @noRd
+ddm_nll <- function(pars, RT, response, base, types, applies, groups, precision,
+                    stop_on_error, p_outlier = 0, w_outlier = 0.1) {
+  for (p in seq_along(types)) {
+    base[[types[p]]][applies[[p]]] <- pars[[p]]
+  }
+  dens <- numeric(length(RT))
+  for (g in groups) {
+    k <- g[1]
+    at <- function(type) {
+      x <- base[[type]]
+      if (length(x) == 1) x else x[k]
+    }
+    dens[g] <- ddiffusion(
+      rt = RT[g], response = response[g],
+      a = at("a"), v = at("v"), t0 = at("t0"), z = at("z") * at("a"),
+      st0 = at("st0"), sz = at("sz"), sv = at("sv"),
+      precision = precision, stop_on_error = stop_on_error
+    )
+  }
+
+  # Outlier mixture as in HDDM: each trial comes from the diffusion model with probability
+  # 1 - p_outlier, and otherwise from a uniform outlier distribution with density w_outlier
+  if (p_outlier > 0) {
+    dens[is.na(dens) | dens < 0] <- 0
+    dens <- (1 - p_outlier) * dens + p_outlier * w_outlier
+  }
+
+  # A density of 0 usually means the true density is too small to represent (e.g. an RT
+  # just above t0), so it is replaced by the smallest positive double. A larger floor (this
+  # used to be 1e-10) caps the cost of a poorly fitted trial, and the optimizer can then
+  # improve the fit to the remaining trials by effectively discarding one.
+  if (any(is.na(dens) | dens <= 0)) {
+    dens[dens <= 0 | is.na(dens)] <- .Machine$double.xmin
+  }
+  -sum(log(dens))
+}
+
+# Fit the model to one participant's trials (`d`, with columns cond, response and RT).
+# `applies` gives, per estimated parameter, the trials of `d` it applies to; `s` holds the
+# model settings built by driftd(). Returns the nlminb fit, the number of optimizer runs,
+# whether the best solution was replicated, and the standard errors.
+#' @noRd
+fit_participant <- function(d, id, applies, s) {
+  types <- s$par_types
+
+  # ---- Starting values ----
+  # EZ-diffusion (Wagenmakers et al., 2007) gives closed-form estimates of v, a and t0 per
+  # condition cell. t0 is kept below the fastest RT (the 10% quantile with an outlier
+  # component) so every trial has a non-zero likelihood at the start. z starts unbiased,
+  # and the variability parameters at small values.
+  cond_summaries <- d %>%
+    dplyr::group_by(.data$cond) %>%
+    dplyr::summarise(
+      n_trials = n(),
+      meanRT = mean(.data$RT, na.rm = TRUE),
+      varRT  = stats::var(.data$RT, na.rm = TRUE),
+      minRT  = t0_cap(.data$RT, s$p_outlier),
+      q10RT  = quantile(.data$RT, probs = 0.1, na.rm = TRUE, names = FALSE),
+      prop_upper = mean(.data$response == "upper", na.rm = TRUE),
+      .groups = "drop"
+    )
+  ez <- ez_diffusion(cond_summaries$prop_upper, cond_summaries$meanRT,
+                     cond_summaries$varRT, cond_summaries$n_trials)
+  cond_summaries <- cond_summaries %>%
+    dplyr::mutate(
+      v_guess = pmin(pmax(ez$v, -5), 5),
+      a_guess = pmin(pmax(ez$a, 0.3), 5),
+      t0_guess = pmin(ez$t0, 0.9 * .data$minRT),
+      z_guess = 0.5,
+      st0_guess = 0.1,
+      sz_guess = 0.1,
+      sv_guess = 0.1
+    ) %>%
+    # fallbacks where EZ is undefined or implausible; a non-positive EZ t0 (e.g. strongly
+    # skewed RTs) falls back to the fast-RT floor
+    dplyr::mutate(
+      v_guess = ifelse(is.na(.data$v_guess), 0.5 * sign(.data$prop_upper - 0.5 + 1e-6), .data$v_guess),
+      a_guess = ifelse(is.na(.data$a_guess), 1.0, .data$a_guess),
+      t0_guess = ifelse(is.na(.data$t0_guess) | .data$t0_guess <= 0,
+                        pmin(.data$q10RT, 0.9 * .data$minRT), .data$t0_guess)
+    )
+  guesses <- dplyr::left_join(d, cond_summaries, by = "cond")
+
+  # Per parameter type, the value of every trial before the estimated parameters are
+  # filled in: the fixed value, or the starting guesses
+  base <- lapply(names(s$fixed), function(type) {
+    if (s$fixed[[type]]) s$defaults[[type]] else guesses[[paste0(type, "_guess")]]
+  })
+  names(base) <- names(s$fixed)
+
+  # Each estimated parameter starts at the mean guess over the trials it applies to (the
+  # minimum for t0, which must stay below every RT it applies to), or at its default if
+  # there is no usable guess, and is kept inside the bounds. t0 is the earliest possible
+  # response, so any trial faster than t0 has zero likelihood; its upper bound is therefore
+  # just below the fastest RT it applies to (or the 10% quantile with an outlier component),
+  # otherwise the optimizer can get stuck at a t0 that writes off the fastest trials.
+  start <- s$start
+  upper <- s$upper
+  for (p in seq_along(s$param_names)) {
+    trials <- applies[[p]]
+    if (types[p] == "t0" && any(trials)) {
+      upper[p] <- 0.999 * t0_cap(d$RT[trials], s$p_outlier)
+    }
+    g <- guesses[[paste0(types[p], "_guess")]][trials]
+    g <- g[is.finite(g)]
+    if (length(g) > 0) start[p] <- if (types[p] == "t0") min(g) else mean(g)
+  }
+  start <- pmin(pmax(start, s$lower), upper)
+
+  # A parameter that applies to no trials of this participant (e.g. a condition the
+  # participant has no data for) cannot be estimated. It is left out of this participant's
+  # fit and reported as NA, so it neither stays at its starting value nor makes the Hessian
+  # singular for the other parameters.
+  estimable <- vapply(applies, any, logical(1))
+  fit_names <- s$param_names[estimable]
+  types <- types[estimable]
+  applies <- applies[estimable]
+  lower <- s$lower[estimable]
+  upper <- upper[estimable]
+  start <- start[estimable]
+
+  if (s$print_starting_vals) {
+    cat("\n======================================\n")
+    cat(paste0("Participant ", id, " -- Summary:\n"))
+    cat("======================================\n")
+    print(cond_summaries)
+    cat("\nStarting values passed to the optimizer:\n")
+    print(round(start, 3))
+    cat("======================================\n\n")
+  }
+
+  # Trials that share all parameter values (same condition cell and the same pattern of
+  # applying parameters), so the likelihood is computed once per group
+  groups <- unname(split(seq_len(nrow(d)), interaction(
+    d$cond, do.call(paste0, lapply(applies, as.integer)), drop = TRUE)))
+
+  nll <- function(pars, precision = s$precision) {
+    ddm_nll(pars, RT = d$RT, response = d$response, base = base, types = types,
+            applies = applies, groups = groups, precision = precision,
+            stop_on_error = s$stop_on_error, p_outlier = s$p_outlier, w_outlier = s$w_outlier)
+  }
+  run_fit <- function(start_vals) {
+    nlminb(start_vals, objective = nll,
+           control = list(iter.max = 10000, eval.max = 10000), lower = lower, upper = upper)
+  }
+
+  # ---- Fit, with retries ----
+  # Retry (up to max_retries further optimizer runs) if the fit did not converge or an sv
+  # or sz estimate is at 0 (below 0.001; how close the optimizer gets to exactly 0 differs
+  # between platforms):
+  # 1) if it did not converge, restart the optimizer from where it stopped, which often
+  #    completes a fit that stopped early;
+  # 2) fit from further starting points (first with sv/sz stuck at 0 moved to positive
+  #    values, then alternative starting values) until the best converged solution has
+  #    been reached from two independent starting points, which indicates it is the
+  #    global optimum rather than a local one.
+  # The fit with the highest likelihood is kept.
+  stuck_at_zero <- function(f) any(types %in% c("sv", "sz") & f$par <= 1e-3)
+  fit <- run_fit(start)
+  n_runs <- 1
+  replicated <- NA
+  if ((fit$convergence != 0 || stuck_at_zero(fit)) && s$max_retries > 0) {
+    if (fit$convergence != 0) {
+      restarted <- run_fit(fit$par)
+      n_runs <- n_runs + 1
+      if (restarted$objective <= fit$objective) fit <- restarted
+    }
+
+    start_optima <- fit$objective           # best solution from each independent start
+    start_converged <- fit$convergence == 0
+    replicated <- FALSE
+    tried_nudge <- FALSE
+    k <- 0
+    while (n_runs <= s$max_retries && !replicated) {
+      if (!tried_nudge && stuck_at_zero(fit)) {
+        next_start <- nudged_start(fit$par, types, lower, upper, s$defaults)
+        tried_nudge <- TRUE
+      } else {
+        k <- k + 1
+        next_start <- alternative_start(k, start, types, lower, upper, s$defaults)
+      }
+      candidate <- run_fit(next_start)
+      n_runs <- n_runs + 1
+      start_optima <- c(start_optima, candidate$objective)
+      start_converged <- c(start_converged, candidate$convergence == 0)
+      if (candidate$objective < fit$objective) fit <- candidate
+      replicated <- fit$convergence == 0 &&
+        sum(start_converged & abs(start_optima - fit$objective) < 0.01) >= 2
+    }
+  }
+
+  # ---- Standard errors ----
+  # SEs are the square roots of the diagonal of the inverse Hessian of the negative
+  # log-likelihood at the estimates (the observed Fisher information), computed numerically
+  # with Richardson extrapolation (numDeriv). The Hessian is evaluated with at least
+  # precision 4, because the less precise numerical integration at precision 3 noticeably
+  # distorts the second derivatives when sv or sz are estimated.
+  # Wald SEs require the estimate to lie inside its bounds. Parameters at (within 0.001 of)
+  # a bound, e.g. sv = 0 or t0 at the fastest RT, get no SE, and the SEs of the other
+  # parameters are computed with them held at their estimates.
+  se <- setNames(rep(NA_real_, length(fit_names)), fit_names)
+  vcov <- NULL
+  se_status <- "not computed"
+  if (s$compute_se) {
+    at_bound <- (fit$par - lower < 1e-3) | (upper - fit$par < 1e-3)
+    free <- which(!at_bound)
+    bound_note <- if (any(at_bound)) {
+      paste0("no SE at bound: ", paste(fit_names[at_bound], collapse = ", "))
+    } else NULL
+    se_status <- if (is.null(bound_note)) "ok" else bound_note
+    if (length(free) > 0) {
+      nll_free <- function(x) {
+        p <- fit$par
+        p[free] <- x
+        nll(p, precision = max(s$precision, 4))
+      }
+      # numDeriv's largest step is d * |x| (d = 0.1 by default). A step past a bound, e.g.
+      # t0 beyond the fastest RT, gives trials a likelihood of 0 and a meaningless Hessian,
+      # so d is reduced to keep every step at most halfway to the nearest bound.
+      x_free <- fit$par[free]
+      gap <- pmin(x_free - lower[free], upper[free] - x_free)
+      step_d <- min(0.1, 0.5 * min(gap / pmax(abs(x_free), 1e-4)))
+      H <- tryCatch(numDeriv::hessian(nll_free, x_free, method.args = list(d = step_d)),
+                    error = function(e) NULL)
+      if (is.null(H) || any(!is.finite(H))) {
+        se_status <- paste(c("Hessian could not be computed", bound_note), collapse = "; ")
+      } else {
+        H <- (H + t(H)) / 2
+        if (min(eigen(H, symmetric = TRUE, only.values = TRUE)$values) <= 0) {
+          # not a proper maximum (or a parameter is not identified): no valid SEs
+          se_status <- paste(c("Hessian not positive definite", bound_note), collapse = "; ")
+        } else {
+          vcov <- solve(H)
+          dimnames(vcov) <- list(fit_names[free], fit_names[free])
+          se[free] <- sqrt(diag(vcov))
+        }
+      }
+    }
+  }
+
+  list(fit = fit, fit_names = fit_names, n_runs = n_runs, replicated = replicated,
+       se = se, vcov = vcov, se_status = se_status)
+}
+
+# Alternative starting vector number k (k >= 1), spread over the plausible parameter space
+# with a Halton sequence (one prime base per parameter type, so all conditions of a
+# parameter move together and the EZ pattern across conditions is kept). a and v are
+# scaled by 0.5-2 times their EZ start; the others cover their usual range. Deterministic,
+# so results are reproducible and the user's random seed is untouched.
+#' @noRd
+alternative_start <- function(k, start, types, lower, upper, defaults) {
+  s <- start
+  primes <- c(a = 2, t0 = 3, z = 5, v = 7, st0 = 11, sz = 13, sv = 17)
+  for (p in seq_along(types)) {
+    u <- halton(k, primes[[types[p]]])
+    s[p] <- switch(types[p],
+      a   = start[p] * 2^(2 * u - 1),
+      v   = start[p] * 2^(2 * u - 1),
+      t0  = upper[p] * (0.2 + 0.75 * u),
+      z   = 0.3 + 0.4 * u,
+      st0 = 0.3 * u,
+      sv  = 2.5 * u,
+      # sz must stay below 2 * min(z, a - z) on the absolute scale to be valid
+      sz  = 0.9 * u * sz_limit(s, types, defaults))
+  }
+  pmin(pmax(s, lower), upper)
+}
+
+# Starting vector that moves sv and sz estimates stuck at 0 to clearly positive values.
+# sv and sz spread drift and starting point symmetrically, so near 0 they change the
+# likelihood only quadratically: its slope at exactly 0 is zero, and the optimizer can
+# report convergence there even when a positive value fits better.
+#' @noRd
+nudged_start <- function(pars, types, lower, upper, defaults) {
+  s <- pars
+  s[types == "sv" & s <= 1e-3] <- 1
+  if (any(types == "sz" & s <= 1e-3)) {
+    s[types == "sz" & s <= 1e-3] <- 0.5 * sz_limit(s, types, defaults)
+  }
+  pmin(pmax(s, lower), upper)
+}
+
+# The largest valid sz, 2 * min(z, 1 - z) * a, at the mean a and z of a parameter vector
+# (or their fixed values)
+#' @noRd
+sz_limit <- function(pars, types, defaults) {
+  a_mean <- if (any(types == "a")) mean(pars[types == "a"]) else defaults[["a"]]
+  z_mean <- if (any(types == "z")) mean(pars[types == "z"]) else defaults[["z"]]
+  2 * min(z_mean, 1 - z_mean) * a_mean
 }
