@@ -76,6 +76,10 @@ plot(recover_models(a = fit, a_v = fit_v, seed = 1))
 sims <- simulate(fit, nsim = 10, seed = 1)
 ```
 
+## Interactive parameter explorer
+
+The [DDM Parameter Explorer](https://jstrueder.github.io/driftd/explorer/) shows in the browser how drift rate, boundary separation, starting point and non-decision time change simulated choices and response times. To use it offline, download [`docs/explorer/index.html`](docs/explorer/index.html) and open it in any browser.
+
 ## Outliers
 
 By default, every trial must be explained by the diffusion model, so a few fast guesses or lapses can distort the estimates; remove anticipations (e.g. RTs below 0.15 s) before fitting. For robustness against contaminant trials that trimming misses, `p_outlier` adds an outlier component as in HDDM (Wiecki, Sofer, & Frank, 2013): each trial's likelihood becomes a mixture of the diffusion model density and a uniform outlier density. It is fixed, not estimated, and off by default (`p_outlier = 0`). See `?driftd` for details.

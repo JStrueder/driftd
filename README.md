@@ -76,6 +76,10 @@ plot(recover_models(a = fit, a_v = fit_v, seed = 1))
 sims <- simulate(fit, nsim = 10, seed = 1)
 ```
 
+## Interactive parameter explorer
+
+The [DDM Parameter Explorer](https://jstrueder.github.io/driftd/explorer/) shows in the browser how drift rate, boundary separation, starting point and non-decision time change simulated choices and response times. To use it offline, download [`docs/explorer/index.html`](docs/explorer/index.html) and open it in any browser.
+
 ## Outliers
 
 By default, every trial must be explained by the diffusion model, so a
